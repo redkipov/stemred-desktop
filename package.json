@@ -6,7 +6,7 @@
   "homepage": "https://chat-stem.ru/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stemred/stemred-desktop.git"
+    "url": "https://github.com/redkipov/stemred-desktop.git"
   },
   "type": "module",
   "scripts": {

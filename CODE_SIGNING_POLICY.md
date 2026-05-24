@@ -5,7 +5,7 @@ Free code signing for official open-source releases is intended to be provided t
 ## Project
 
 - Project name: STEM Messenger Desktop
-- Repository: https://github.com/stemred/stemred-desktop
+- Repository: https://github.com/redkipov/stemred-desktop
 - License: MIT
 - Privacy policy: `PRIVACY.md` and https://chat-stem.ru/privacy
 
@@ -25,10 +25,8 @@ Unsigned third-party binaries are not intentionally bundled except components do
 
 ## Roles
 
-- Committers and reviewers: STEM desktop maintainers.
-- Release approvers: STEM desktop maintainers with repository owner permissions.
-
-Before public SignPath application, replace these role descriptions with direct links to GitHub teams or maintainers in the public repository.
+- Committers and reviewers: repository maintainers with write access.
+- Release approvers: repository maintainers with owner permissions.
 
 ## Release Rules
 

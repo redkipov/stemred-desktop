@@ -22,7 +22,6 @@ Project policies:
 ## Windows build
 
 ```powershell
-cd wrappers\desktop
 npm install
 npm run check
 npm run build

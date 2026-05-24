@@ -11,7 +11,7 @@ if (Test-Path $cargoBin) {
 
 $tauriCli = Join-Path $PSScriptRoot "..\node_modules\.bin\tauri.cmd"
 if (-not (Test-Path $tauriCli)) {
-  throw "Tauri CLI not found. Run npm install in wrappers\desktop first."
+  throw "Tauri CLI not found. Run npm install first."
 }
 
 function Get-LatestNsisInstaller {
