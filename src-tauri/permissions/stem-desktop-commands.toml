@@ -1,0 +1,23 @@
+"$schema" = "../gen/schemas/desktop-schema.json"
+
+[[permission]]
+identifier = "allow-stem-desktop-commands"
+description = "Allows the trusted STEM web shell to call native desktop commands."
+commands.allow = [
+  "bootstrap",
+  "resolve_deep_link",
+  "take_pending_deep_link",
+  "open_external_url",
+  "set_unread_count",
+  "get_autostart_enabled",
+  "set_autostart_enabled",
+  "get_microphone_access_enabled",
+  "set_microphone_access_enabled",
+  "minimize_desktop_window",
+  "toggle_desktop_window_maximized",
+  "close_desktop_window_to_tray",
+  "check_desktop_shell_update",
+  "install_desktop_shell_update",
+  "show_desktop_notification",
+  "save_file_to_downloads_stem",
+]

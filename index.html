@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>stemred</title>
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="titlebar__drag" data-tauri-drag-region aria-hidden="true"></div>
+      <div class="titlebar__brand">stemred</div>
+      <div class="window-controls window-controls--visible">
+        <button id="window-minimize" class="window-control" data-stem-window-command="minimize" type="button" aria-label="Свернуть">-</button>
+        <button id="window-maximize" class="window-control" data-stem-window-command="toggle-maximize" type="button" aria-label="Развернуть">□</button>
+        <button id="window-close" class="window-control window-control--close" data-stem-window-command="close-to-tray" type="button" aria-label="Скрыть в трей">×</button>
+      </div>
+    </header>
+    <main id="app" class="shell">
+      <section class="panel">
+        <div class="mark">sr</div>
+        <p class="eyebrow">Оболочка stemred</p>
+        <h1 id="title">Подключение к stemred</h1>
+        <p id="message">Проверяем конфигурацию сервера и версию оболочки.</p>
+        <div id="progress" class="progress" aria-hidden="true"><span></span></div>
+        <div class="actions">
+          <button id="retry" type="button" hidden>Повторить</button>
+          <button id="open" type="button" hidden>Открыть приложение</button>
+          <button id="update" type="button" hidden>Обновить</button>
+        </div>
+        <p id="details" class="details"></p>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+release/
+src-tauri/target/
+src-tauri/tauri.windows.conf.json
+
+.env
+.env.local
+*.log
+*.tsbuildinfo
+
+*.pfx
+*.p12
+*.key
+*Private*.cer
+*Local Code Signing.cer

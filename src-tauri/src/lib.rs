@@ -1,0 +1,1561 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use base64::{engine::general_purpose, Engine as _};
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
+use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
+use url::Url;
+
+const DEFAULT_REMOTE_URL: &str = "https://chat-stem.ru/messages";
+const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
+const REMOTE_HOST: &str = "chat-stem.ru";
+const AUTOSTART_REG_VALUE: &str = "stemred";
+#[allow(dead_code)]
+const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
+(() => {
+  const TITLEBAR_HEIGHT = 0;
+  const STYLE_ID = 'stem-desktop-native-chrome-fix';
+  const CONTROLS_ID = 'stem-native-window-controls';
+  const DRAG_LAYER_ID = 'stem-native-window-drag-layer';
+  const CONTROLS_OFFSET_X = 2;
+  const CONTROLS_OFFSET_Y = -2;
+  const CONTROLS_HIDE_DELAY_MS = 1000;
+  const CONTROLS_REVEAL_WIDTH = 190;
+  const CONTROLS_REVEAL_HEIGHT = 110;
+  const CONTROL_SELECTOR = '.stem-native-window-button,.stem-desktop-window-button,.window-control,[data-stem-window-command]';
+  const DRAG_REGION_SELECTOR = '[data-stem-desktop-drag-region],.stem-native-window-drag-zone';
+  const NO_DRAG_SELECTOR = '[data-stem-desktop-no-drag],[data-tauri-drag-region="false"]';
+  const INTERACTIVE_SELECTOR = 'a,button,input,select,textarea,label,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[role="option"]';
+  let patchScheduled = false;
+  let controlsRevealInstalled = false;
+  let controlsRevealArmed = false;
+  let controlsHideTimer = 0;
+  let lastPointerX = Number.NaN;
+  let lastPointerY = Number.NaN;
+  const css = `
+    html.stem-desktop-frameless,
+    html.stem-desktop-frameless body {
+      width: 100% !important;
+      height: 100% !important;
+      overflow: hidden !important;
+    }
+
+    html.stem-desktop-frameless body {
+      min-height: 100dvh !important;
+      padding-top: 0 !important;
+    }
+
+    html.stem-desktop-frameless .stem-app-window-content {
+      height: 100dvh !important;
+      margin-top: 0 !important;
+      overflow: hidden !important;
+    }
+
+    html.stem-desktop-frameless .stem-web-shell {
+      overflow: hidden !important;
+    }
+
+    html.stem-desktop-frameless .stem-app-window-content .stem-web-shell {
+      height: 100% !important;
+      min-height: 100% !important;
+    }
+
+    html.stem-desktop-frameless body:not(:has(.stem-app-window-content)) .stem-web-shell {
+      height: 100dvh !important;
+      min-height: 100dvh !important;
+      margin-top: 0 !important;
+    }
+
+    html.stem-desktop-frameless .stem-web-shell__viewport,
+    html.stem-desktop-frameless body:not(:has(.stem-app-window-content)) .stem-web-shell > .relative {
+      height: 100% !important;
+      min-height: 0 !important;
+    }
+
+    html.stem-desktop-frameless .stem-app-window-content > .min-h-screen {
+      min-height: 100% !important;
+    }
+
+    @supports not (height: 100dvh) {
+      html.stem-desktop-frameless body {
+        min-height: 100vh !important;
+      }
+
+      html.stem-desktop-frameless .stem-app-window-content {
+        height: 100vh !important;
+      }
+
+      html.stem-desktop-frameless body:not(:has(.stem-app-window-content)) .stem-web-shell {
+        height: 100vh !important;
+        min-height: 100vh !important;
+      }
+    }
+
+    .stem-desktop-titlebar {
+      display: none !important;
+    }
+
+    .stem-desktop-titlebar__drag,
+    .titlebar__drag {
+      position: absolute !important;
+      inset: 0 112px 0 0 !important;
+      z-index: 0 !important;
+    }
+
+    .stem-desktop-window-controls,
+    .window-controls {
+      position: relative !important;
+      z-index: 2 !important;
+      pointer-events: auto !important;
+    }
+
+    .stem-desktop-window-button,
+    .window-control,
+    .stem-native-window-button,
+    .stem-desktop-update-button {
+      pointer-events: auto !important;
+    }
+
+    .stem-native-window-controls {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      pointer-events: auto !important;
+      transform: translate(${CONTROLS_OFFSET_X}px, ${CONTROLS_OFFSET_Y}px) !important;
+      transition: opacity 160ms ease, visibility 160ms ease !important;
+    }
+
+    .stem-native-window-controls--visible {
+      opacity: 1 !important;
+      visibility: visible !important;
+    }
+
+    .stem-native-window-controls--hidden {
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+
+    .stem-native-window-controls--fallback {
+      position: fixed !important;
+      top: 0 !important;
+      right: 0 !important;
+      z-index: 2147483000 !important;
+      border: 1px solid color-mix(in srgb, var(--stem-border, rgba(255,255,255,0.18)) 70%, transparent) !important;
+      border-radius: 16px !important;
+      padding: 4px !important;
+      background: color-mix(in srgb, var(--stem-bg, #061014) 74%, transparent) !important;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28) !important;
+      backdrop-filter: blur(18px) !important;
+    }
+
+    .stem-native-window-controls--inline {
+      margin-left: 4px !important;
+    }
+
+    .stem-native-window-button {
+      display: grid !important;
+      width: 34px !important;
+      height: 34px !important;
+      min-height: 34px !important;
+      place-items: center !important;
+      border: 1px solid color-mix(in srgb, var(--stem-border, rgba(255,255,255,0.18)) 76%, transparent) !important;
+      border-radius: 999px !important;
+      padding: 0 !important;
+      color: var(--stem-text, #edf7f7) !important;
+      background: color-mix(in srgb, var(--stem-surface-soft, rgba(255,255,255,0.1)) 78%, transparent) !important;
+      font: inherit !important;
+      font-size: 15px !important;
+      line-height: 1 !important;
+      cursor: pointer !important;
+    }
+
+    .stem-desktop-update-button {
+      position: relative !important;
+      display: grid !important;
+      width: 34px !important;
+      height: 34px !important;
+      min-height: 34px !important;
+      place-items: center !important;
+      border: 1px solid color-mix(in srgb, #2dd4bf 66%, var(--stem-border, rgba(255,255,255,0.18))) !important;
+      border-radius: 999px !important;
+      padding: 0 !important;
+      color: #eafffb !important;
+      background:
+        radial-gradient(circle at 34% 22%, rgba(255,255,255,0.34), transparent 34%),
+        linear-gradient(135deg, #10b981, #22d3ee) !important;
+      box-shadow: 0 0 18px rgba(34, 211, 238, 0.24) !important;
+      font: inherit !important;
+      font-size: 15px !important;
+      line-height: 1 !important;
+      cursor: pointer !important;
+    }
+
+    .stem-desktop-update-button::after {
+      content: attr(data-stem-update-count) !important;
+      position: absolute !important;
+      top: -6px !important;
+      right: -6px !important;
+      display: none !important;
+      min-width: 18px !important;
+      height: 18px !important;
+      place-items: center !important;
+      border: 1px solid rgba(255, 255, 255, 0.72) !important;
+      border-radius: 999px !important;
+      color: #042f2e !important;
+      background: #99f6e4 !important;
+      font-size: 11px !important;
+      font-weight: 800 !important;
+      line-height: 1 !important;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25) !important;
+    }
+
+    .stem-desktop-update-button:not([data-stem-update-count='0'])::after {
+      display: grid !important;
+    }
+
+    .stem-desktop-update-button[hidden] {
+      display: none !important;
+    }
+
+    .stem-desktop-update-button:hover {
+      filter: brightness(1.08) saturate(1.08) !important;
+    }
+
+    .stem-desktop-update-button:disabled {
+      cursor: wait !important;
+      opacity: 0.78 !important;
+    }
+
+    .stem-native-window-button:hover {
+      border-color: color-mix(in srgb, var(--stem-cyan, #18b9a7) 48%, var(--stem-border, rgba(255,255,255,0.18))) !important;
+      background: color-mix(in srgb, var(--stem-cyan, #18b9a7) 18%, var(--stem-surface-soft, rgba(255,255,255,0.1))) !important;
+    }
+
+    .stem-native-window-button--close:hover {
+      border-color: color-mix(in srgb, #ff5c7a 56%, var(--stem-border, rgba(255,255,255,0.18))) !important;
+      background: color-mix(in srgb, #ff5c7a 24%, var(--stem-surface-soft, rgba(255,255,255,0.1))) !important;
+    }
+
+    .stem-native-window-drag-layer {
+      position: fixed !important;
+      inset: 0 !important;
+      z-index: 2147482500 !important;
+      pointer-events: none !important;
+      user-select: none !important;
+    }
+
+    .stem-native-window-drag-zone {
+      position: absolute !important;
+      pointer-events: auto !important;
+      user-select: none !important;
+    }
+
+    .stem-native-window-drag-zone--top {
+      top: 0 !important;
+      right: 170px !important;
+      left: 0 !important;
+      height: 22px !important;
+    }
+
+    .stem-native-window-drag-zone--left {
+      top: 22px !important;
+      bottom: 10px !important;
+      left: 0 !important;
+      width: 10px !important;
+    }
+
+    .stem-native-window-drag-zone--right {
+      top: 58px !important;
+      right: 0 !important;
+      bottom: 10px !important;
+      width: 10px !important;
+    }
+
+    .stem-native-window-drag-zone--bottom {
+      right: 0 !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      height: 10px !important;
+    }
+
+    .stem-native-window-obsolete {
+      display: none !important;
+    }
+  `;
+
+  function getInvoke() {
+    const invoke = window.__TAURI_INTERNALS__?.invoke || window.__TAURI__?.core?.invoke || window.__TAURI_INVOKE__;
+    return typeof invoke === 'function' ? invoke : null;
+  }
+
+  function invokeWindowPlugin(name) {
+    const invoke = getInvoke();
+    if (!invoke) return Promise.reject(new Error('Tauri invoke is unavailable'));
+    return Promise.resolve(invoke(name, { label: 'main' })).catch(() => Promise.resolve(invoke(name, {})));
+  }
+
+  function invokeNative(command) {
+    const pluginName =
+      command === 'minimize'
+        ? 'plugin:window|minimize'
+        : command === 'toggle-maximize'
+          ? 'plugin:window|toggle_maximize'
+          : command === 'close-to-tray'
+            ? 'plugin:window|hide'
+            : '';
+    const fallbackName =
+      command === 'minimize'
+        ? 'minimize_desktop_window'
+        : command === 'toggle-maximize'
+          ? 'toggle_desktop_window_maximized'
+          : command === 'close-to-tray'
+            ? 'close_desktop_window_to_tray'
+            : '';
+    if (!pluginName) return;
+    invokeWindowPlugin(pluginName).catch(() => {
+      const invoke = getInvoke();
+      if (fallbackName && invoke) Promise.resolve(invoke(fallbackName, {})).catch(() => {});
+    });
+  }
+
+  function commandFor(button) {
+    const explicit = button.getAttribute('data-stem-window-command');
+    if (explicit) return explicit;
+    if (
+      button.classList.contains('stem-native-window-button--close') ||
+      button.classList.contains('stem-desktop-window-button--close') ||
+      button.classList.contains('window-control--close')
+    ) {
+      return 'close-to-tray';
+    }
+
+    const controls = button.closest('.stem-native-window-controls,.stem-desktop-window-controls,.window-controls');
+    if (!controls) return '';
+    const buttons = Array.from(controls.querySelectorAll('button'));
+    const index = buttons.indexOf(button);
+    return index === 0 ? 'minimize' : index === 1 ? 'toggle-maximize' : index === 2 ? 'close-to-tray' : '';
+  }
+
+  function createNativeControls() {
+    const controls = document.createElement('div');
+    controls.id = CONTROLS_ID;
+    controls.className = 'stem-native-window-controls stem-native-window-controls--visible';
+    controls.innerHTML = `
+      <button aria-label="Свернуть" class="stem-native-window-button" data-stem-window-command="minimize" type="button"><span aria-hidden="true">&#8722;</span></button>
+      <button aria-label="Развернуть" class="stem-native-window-button" data-stem-window-command="toggle-maximize" type="button"><span aria-hidden="true">&#9633;</span></button>
+      <button aria-label="Скрыть в трей" class="stem-native-window-button stem-native-window-button--close" data-stem-window-command="close-to-tray" type="button"><span aria-hidden="true">&#215;</span></button>
+    `;
+    return controls;
+  }
+
+  function nativeControlsElement() {
+    return document.getElementById(CONTROLS_ID) || createNativeControls();
+  }
+
+  function setNativeControlsVisible(visible) {
+    const controls = document.getElementById(CONTROLS_ID);
+    if (!controls) return;
+    controls.classList.toggle('stem-native-window-controls--visible', visible);
+    controls.classList.toggle('stem-native-window-controls--hidden', !visible);
+  }
+
+  function isPointerNearControlsCorner() {
+    return (
+      Number.isFinite(lastPointerX) &&
+      Number.isFinite(lastPointerY) &&
+      lastPointerX >= window.innerWidth - CONTROLS_REVEAL_WIDTH &&
+      lastPointerY <= CONTROLS_REVEAL_HEIGHT
+    );
+  }
+
+  function showNativeControlsTemporarily() {
+    window.clearTimeout(controlsHideTimer);
+    controlsRevealArmed = false;
+    setNativeControlsVisible(true);
+    controlsHideTimer = window.setTimeout(() => {
+      controlsRevealArmed = true;
+      setNativeControlsVisible(isPointerNearControlsCorner());
+    }, CONTROLS_HIDE_DELAY_MS);
+  }
+
+  function installNativeControlsAutoReveal() {
+    if (controlsRevealInstalled) return;
+    controlsRevealInstalled = true;
+    window.addEventListener(
+      'pointermove',
+      (event) => {
+        lastPointerX = event.clientX;
+        lastPointerY = event.clientY;
+        if (controlsRevealArmed) setNativeControlsVisible(isPointerNearControlsCorner());
+      },
+      { passive: true }
+    );
+    window.addEventListener('focus', showNativeControlsTemporarily);
+    window.addEventListener('pageshow', showNativeControlsTemporarily);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) showNativeControlsTemporarily();
+    });
+    showNativeControlsTemporarily();
+  }
+
+  function createDragLayer() {
+    const layer = document.createElement('div');
+    layer.id = DRAG_LAYER_ID;
+    layer.className = 'stem-native-window-drag-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    layer.innerHTML = `
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--top" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--left" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--right" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--bottom" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
+    `;
+    return layer;
+  }
+
+  function installDragLayer() {
+    if (!document.body) return;
+    const layer = document.getElementById(DRAG_LAYER_ID) || createDragLayer();
+    if (layer.parentElement !== document.body) document.body.appendChild(layer);
+  }
+
+  function isVisible(element) {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
+  function firstVisible(selectors) {
+    for (const selector of selectors) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (element instanceof HTMLElement && isVisible(element)) return element;
+      }
+    }
+    return null;
+  }
+
+  function findControlsHost() {
+    return firstVisible([
+      '[data-stem-window-controls-host]',
+      '.stem-glass-panel-strong > .relative.z-30 .absolute.right-2.top-2',
+      '.stem-glass-panel-strong > .relative.z-30 .absolute.right-4.top-2',
+      'header.stem-topbar > div:last-child'
+    ]);
+  }
+
+  function buttonLabel(button) {
+    return [
+      button.getAttribute('aria-label') || '',
+      button.getAttribute('title') || '',
+      button.textContent || ''
+    ].join(' ').trim().toLowerCase();
+  }
+
+  function hideObsoleteHostButtons(host) {
+    const obsolete = ['поиск', 'закреп', 'откреп', 'настрой', 'синхрон', 'обнов'];
+    for (const button of host.querySelectorAll('button')) {
+      if (!(button instanceof HTMLButtonElement)) continue;
+      if (button.closest('.stem-native-window-controls')) continue;
+      const label = buttonLabel(button);
+      if (obsolete.some((word) => label.includes(word))) {
+        button.classList.add('stem-native-window-obsolete');
+      }
+    }
+  }
+
+  function installNativeControls() {
+    const existingLocalControls = firstVisible(['.window-controls']);
+    if (existingLocalControls?.querySelector('.window-control')) {
+      document.getElementById(CONTROLS_ID)?.remove();
+      existingLocalControls.classList.add('stem-native-window-host');
+      return;
+    }
+
+    const controls = nativeControlsElement();
+    const host = findControlsHost();
+
+    controls.classList.remove('stem-native-window-controls--inline', 'stem-native-window-controls--fallback');
+    controls.querySelectorAll('[data-tauri-drag-region]').forEach((element) => element.removeAttribute('data-tauri-drag-region'));
+
+    if (host) {
+      hideObsoleteHostButtons(host);
+      host.classList.add('stem-native-window-host');
+      if (controls.parentElement !== host) host.appendChild(controls);
+      controls.classList.add('stem-native-window-controls--inline');
+      return;
+    }
+
+    if (controls.parentElement !== document.body) document.body.appendChild(controls);
+    controls.classList.add('stem-native-window-controls--fallback');
+  }
+
+  function installDragRegions() {
+    const surfaces = [
+      '.stem-app-window-content',
+      '.stem-web-shell',
+      '.stem-web-shell__viewport'
+    ];
+    const blockers = [
+      '.glass-subtle',
+      '.stem-glass-panel',
+      '.stem-glass-panel-strong',
+      '.messenger-scroll',
+      '.stem-message-field',
+      'form'
+    ];
+    const candidates = [
+      'header.stem-topbar',
+      '.stem-glass-panel-strong > .relative.z-30',
+      '.glass-subtle > aside > div:first-child'
+    ];
+
+    for (const selector of surfaces) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (element instanceof HTMLElement && element.getAttribute('data-tauri-drag-region') !== 'deep') {
+          element.setAttribute('data-stem-desktop-drag-region', '');
+          element.setAttribute('data-tauri-drag-region', 'deep');
+        }
+      }
+    }
+
+    for (const selector of blockers) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (element instanceof HTMLElement) {
+          if (!element.hasAttribute('data-stem-desktop-no-drag')) element.setAttribute('data-stem-desktop-no-drag', '');
+          if (element.getAttribute('data-tauri-drag-region') !== 'false') element.setAttribute('data-tauri-drag-region', 'false');
+        }
+      }
+    }
+
+    for (const selector of candidates) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (element instanceof HTMLElement) {
+          if (element.hasAttribute('data-stem-desktop-no-drag')) element.removeAttribute('data-stem-desktop-no-drag');
+          if (!element.hasAttribute('data-stem-desktop-drag-region')) element.setAttribute('data-stem-desktop-drag-region', '');
+          if (element.getAttribute('data-tauri-drag-region') !== 'deep') element.setAttribute('data-tauri-drag-region', 'deep');
+        }
+      }
+    }
+  }
+
+  function installStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function ensureDragZone(titlebar, className) {
+    titlebar.removeAttribute('data-tauri-drag-region');
+    if (titlebar.querySelector('.stem-desktop-titlebar__drag,.titlebar__drag')) return;
+    const dragZone = document.createElement('div');
+    dragZone.className = className;
+    dragZone.setAttribute('aria-hidden', 'true');
+    dragZone.setAttribute('data-tauri-drag-region', '');
+    titlebar.insertBefore(dragZone, titlebar.firstChild);
+  }
+
+  function patchChrome() {
+    document.documentElement.classList.add('stem-desktop-frameless');
+    document.documentElement.style.setProperty('--stem-desktop-titlebar-height', `${TITLEBAR_HEIGHT}px`);
+    document.documentElement.style.setProperty('--app-top', `${TITLEBAR_HEIGHT}px`);
+    document.documentElement.style.setProperty('--app-height', '100dvh');
+
+    installStyle();
+    installNativeControls();
+    installNativeControlsAutoReveal();
+    installDragLayer();
+  }
+
+  function schedulePatchChrome() {
+    if (patchScheduled) return;
+    patchScheduled = true;
+    const run = () => {
+      patchScheduled = false;
+      patchChrome();
+    };
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(run);
+    else window.setTimeout(run, 16);
+  }
+
+  function eventElementPath(event) {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if (path.length) return path.filter((element) => element instanceof HTMLElement);
+    const target = event.target;
+    return target instanceof HTMLElement ? [target] : [];
+  }
+
+  function shouldStartWindowDrag(event) {
+    if (event.defaultPrevented || event.button !== 0 || (event.detail !== 1 && event.detail !== 2)) return false;
+
+    for (const element of eventElementPath(event)) {
+      if (element.matches(CONTROL_SELECTOR)) return false;
+      const hasDragRegion = element.matches(DRAG_REGION_SELECTOR) || element.getAttribute('data-tauri-drag-region') === 'deep';
+      if (element.matches(INTERACTIVE_SELECTOR) && !hasDragRegion) return false;
+      if (element.matches(NO_DRAG_SELECTOR)) return false;
+      if (hasDragRegion) return true;
+    }
+
+    return false;
+  }
+
+  document.addEventListener(
+    'mousedown',
+    (event) => {
+      if (!shouldStartWindowDrag(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      const command = event.detail === 2 ? 'plugin:window|internal_toggle_maximize' : 'plugin:window|start_dragging';
+      invokeWindowPlugin(command).catch(() => {});
+    },
+    true
+  );
+
+  function stopControlPress(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest(CONTROL_SELECTOR)) {
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    }
+  }
+
+  document.addEventListener('pointerdown', stopControlPress, true);
+  document.addEventListener('mousedown', stopControlPress, true);
+
+  document.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest(CONTROL_SELECTOR);
+      if (!(button instanceof HTMLButtonElement)) return;
+      const command = commandFor(button);
+      if (!command) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      invokeNative(command);
+    },
+    true
+  );
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', patchChrome, { once: true });
+  } else {
+    patchChrome();
+  }
+
+  window.addEventListener('load', schedulePatchChrome, { once: true });
+})();
+"#;
+
+struct DesktopState {
+    pending_deep_link: Mutex<Option<String>>,
+    unread_count: Mutex<u32>,
+    microphone_access_enabled: Mutex<bool>,
+}
+
+impl Default for DesktopState {
+    fn default() -> Self {
+        Self {
+            pending_deep_link: Mutex::new(None),
+            unread_count: Mutex::new(0),
+            microphone_access_enabled: Mutex::new(true),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientConfig {
+    remote_url: String,
+    web_build_id: String,
+    api_build_id: String,
+    min_shell_version: String,
+    recommended_shell_version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BootstrapResult {
+    state: String,
+    remote_url: String,
+    current_shell_version: String,
+    min_shell_version: String,
+    recommended_shell_version: String,
+    web_build_id: String,
+    api_build_id: String,
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopShellUpdateStatus {
+    available: bool,
+    current_version: String,
+    version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopNotificationRequest {
+    title: String,
+    body: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopDownloadSaveResult {
+    filename: String,
+    directory: String,
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MicrophoneAccessChanged {
+    enabled: bool,
+}
+
+#[tauri::command]
+async fn bootstrap(app: AppHandle) -> Result<BootstrapResult, String> {
+    let current_shell_version = app.package_info().version.to_string();
+
+    match fetch_client_config().await {
+        Ok(config) => {
+            let state = update_state(
+                &current_shell_version,
+                &config.min_shell_version,
+                &config.recommended_shell_version,
+            );
+
+            Ok(BootstrapResult {
+                state,
+                remote_url: normalize_remote_url(&config.remote_url),
+                current_shell_version,
+                min_shell_version: config.min_shell_version,
+                recommended_shell_version: config.recommended_shell_version,
+                web_build_id: config.web_build_id,
+                api_build_id: config.api_build_id,
+                message: None,
+            })
+        }
+        Err(error) => {
+            if remote_is_available(DEFAULT_REMOTE_URL).await {
+                Ok(BootstrapResult {
+                    state: "ready".to_string(),
+                    remote_url: DEFAULT_REMOTE_URL.to_string(),
+                    current_shell_version,
+                    min_shell_version: "0.1.0".to_string(),
+                    recommended_shell_version: "0.1.0".to_string(),
+                    web_build_id: "unknown".to_string(),
+                    api_build_id: "unknown".to_string(),
+                    message: Some(format!(
+                        "Config endpoint unavailable, opening default domain: {error}"
+                    )),
+                })
+            } else {
+                Ok(BootstrapResult {
+                    state: "offline".to_string(),
+                    remote_url: DEFAULT_REMOTE_URL.to_string(),
+                    current_shell_version,
+                    min_shell_version: "0.1.0".to_string(),
+                    recommended_shell_version: "0.1.0".to_string(),
+                    web_build_id: "unknown".to_string(),
+                    api_build_id: "unknown".to_string(),
+                    message: Some(error),
+                })
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn resolve_deep_link(url: String) -> Option<String> {
+    resolve_stem_deep_link(&url, DEFAULT_REMOTE_URL)
+}
+
+#[tauri::command]
+fn take_pending_deep_link(state: tauri::State<'_, DesktopState>) -> Option<String> {
+    state
+        .pending_deep_link
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
+}
+
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|_| "invalid external URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only http and https URLs can be opened externally".to_string());
+    }
+
+    app.opener()
+        .open_url(url, None::<String>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_unread_count(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    count: u32,
+) -> Result<(), String> {
+    {
+        let mut unread = state
+            .unread_count
+            .lock()
+            .map_err(|_| "unread badge state is unavailable".to_string())?;
+        *unread = count;
+    }
+
+    if let Some(tray) = app.tray_by_id("stem-main") {
+        let tooltip = if count == 0 {
+            "stemred".to_string()
+        } else {
+            format!("stemred - {} unread", count)
+        };
+        tray.set_tooltip(Some(&tooltip))
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    platform_autostart::is_enabled(&app)
+}
+
+#[tauri::command]
+fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    platform_autostart::set_enabled(&app, enabled)?;
+    let enabled = platform_autostart::is_enabled(&app)?;
+    let _ = refresh_tray_menu(&app);
+    Ok(enabled)
+}
+
+#[tauri::command]
+fn get_microphone_access_enabled(state: tauri::State<'_, DesktopState>) -> Result<bool, String> {
+    microphone_access_enabled(&state)
+}
+
+#[tauri::command]
+fn set_microphone_access_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    set_microphone_access(&app, enabled)
+}
+
+#[tauri::command]
+fn minimize_desktop_window(app: AppHandle) -> Result<(), String> {
+    main_window(&app)?
+        .minimize()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn toggle_desktop_window_maximized(app: AppHandle) -> Result<bool, String> {
+    let window = main_window(&app)?;
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())?;
+    } else {
+        window.maximize().map_err(|error| error.to_string())?;
+    }
+
+    window.is_maximized().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn close_desktop_window_to_tray(app: AppHandle) -> Result<(), String> {
+    main_window(&app)?.hide().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn check_desktop_shell_update(app: AppHandle) -> Result<DesktopShellUpdateStatus, String> {
+    let current_version = app.package_info().version.to_string();
+    let update = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(match update {
+        Some(update) => DesktopShellUpdateStatus {
+            available: true,
+            current_version: update.current_version,
+            version: Some(update.version),
+        },
+        None => DesktopShellUpdateStatus {
+            available: false,
+            current_version,
+            version: None,
+        },
+    })
+}
+
+#[tauri::command]
+async fn install_desktop_shell_update(_app: AppHandle) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[tauri::command]
+fn show_desktop_notification(
+    app: AppHandle,
+    payload: DesktopNotificationRequest,
+) -> Result<(), String> {
+    let title = payload.title.trim();
+    if title.is_empty() {
+        return Ok(());
+    }
+
+    let mut notification = app
+        .notification()
+        .builder()
+        .title(title.chars().take(80).collect::<String>());
+    if let Some(body) = payload.body {
+        let body = body.trim();
+        if !body.is_empty() {
+            notification = notification.body(body.chars().take(240).collect::<String>());
+        }
+    }
+
+    notification.show().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_file_to_downloads_stem(
+    app: AppHandle,
+    filename: String,
+    content_base64: String,
+) -> Result<DesktopDownloadSaveResult, String> {
+    let bytes = general_purpose::STANDARD
+        .decode(content_base64.trim())
+        .map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+    if bytes.is_empty() {
+        return Err("Файл пустой".to_string());
+    }
+
+    let mut directory = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("Не удалось найти папку загрузок Windows: {error}"))?;
+    directory.push("Stem");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Не удалось создать папку Stem: {error}"))?;
+
+    let safe_filename = sanitize_download_filename(&filename);
+    let target = unique_download_path(&directory, &safe_filename);
+    fs::write(&target, bytes).map_err(|error| format!("Не удалось сохранить файл: {error}"))?;
+
+    Ok(DesktopDownloadSaveResult {
+        filename: target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&safe_filename)
+            .to_string(),
+        directory: directory.to_string_lossy().to_string(),
+        path: target.to_string_lossy().to_string(),
+    })
+}
+
+fn sanitize_download_filename(filename: &str) -> String {
+    let cleaned = filename
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            ch if ch.is_control() => '_',
+            ch => ch,
+        })
+        .collect::<String>()
+        .trim_matches(['.', ' '])
+        .to_string();
+
+    let fallback = if cleaned.is_empty() {
+        "stem-file".to_string()
+    } else {
+        cleaned
+    };
+
+    let reserved = [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    let stem = Path::new(&fallback)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&fallback)
+        .to_ascii_lowercase();
+
+    if reserved.contains(&stem.as_str()) {
+        format!("_{fallback}")
+    } else {
+        fallback
+    }
+}
+
+fn unique_download_path(directory: &Path, filename: &str) -> PathBuf {
+    let candidate = directory.join(filename);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("stem-file");
+    let extension = path.extension().and_then(|value| value.to_str());
+
+    for index in 1..10_000 {
+        let next_filename = match extension {
+            Some(extension) if !extension.is_empty() => {
+                format!("{stem} ({index}).{extension}")
+            }
+            _ => format!("{stem} ({index})"),
+        };
+        let next = directory.join(next_filename);
+        if !next.exists() {
+            return next;
+        }
+    }
+
+    directory.join(format!("{stem}-{}", desktop_start_counter()))
+}
+
+async fn fetch_client_config() -> Result<ClientConfig, String> {
+    let config_url = option_env!("STEM_CLIENT_CONFIG_URL").unwrap_or(DEFAULT_CONFIG_URL);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let response = client
+        .get(config_url)
+        .send()
+        .await
+        .map_err(|error| format!("Сервер конфигурации недоступен: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Сервер конфигурации вернул HTTP {}",
+            response.status()
+        ));
+    }
+
+    response
+        .json::<ClientConfig>()
+        .await
+        .map_err(|error| format!("Не удалось прочитать конфигурацию: {error}"))
+}
+
+async fn remote_is_available(url: &str) -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+    else {
+        return false;
+    };
+
+    client
+        .get(url)
+        .send()
+        .await
+        .map(|response| response.status().is_success() || response.status().is_redirection())
+        .unwrap_or(false)
+}
+
+fn update_state(current: &str, min_shell: &str, recommended_shell: &str) -> String {
+    let current = parse_version(current);
+    let min_shell = parse_version(min_shell);
+    let recommended_shell = parse_version(recommended_shell);
+
+    if current < min_shell {
+        "update_required".to_string()
+    } else if current < recommended_shell {
+        "update_available".to_string()
+    } else {
+        "ready".to_string()
+    }
+}
+
+fn parse_version(value: &str) -> Version {
+    Version::parse(value.trim().trim_start_matches('v')).unwrap_or_else(|_| Version::new(0, 0, 0))
+}
+
+fn normalize_remote_url(value: &str) -> String {
+    let trimmed = value.trim();
+    if is_allowed_url(trimmed) {
+        trimmed.to_string()
+    } else {
+        DEFAULT_REMOTE_URL.to_string()
+    }
+}
+
+fn is_allowed_url(value: &str) -> bool {
+    Url::parse(value)
+        .map(|url| is_allowed_navigation_url(&url))
+        .unwrap_or(false)
+}
+
+fn is_allowed_navigation_url(url: &Url) -> bool {
+    match url.scheme() {
+        "https" | "wss" => url.host_str() == Some(REMOTE_HOST),
+        "http" | "ws" if cfg!(debug_assertions) => {
+            matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"))
+                && matches!(url.port(), Some(3010 | 4000 | 1420))
+        }
+        "tauri" => true,
+        _ => false,
+    }
+}
+
+fn resolve_stem_deep_link(raw: &str, default_remote_url: &str) -> Option<String> {
+    let deep_link = Url::parse(raw).ok()?;
+    if deep_link.scheme() != "stem" {
+        return None;
+    }
+
+    let base = Url::parse(default_remote_url).ok()?;
+    let host = deep_link.host_str().unwrap_or("");
+    let path = deep_link.path().trim_matches('/');
+
+    let mut target = base;
+    target.set_path("/messages");
+    target.set_query(None);
+
+    match host {
+        "messages" => {
+            if let Some(query) = deep_link.query() {
+                target.set_query(Some(query));
+            }
+        }
+        "chat" => {
+            let id = path.split('/').next().unwrap_or("");
+            if id.parse::<u64>().is_ok() {
+                target.set_query(Some(&format!("user={id}")));
+            }
+        }
+        "room" => {
+            let id = path.split('/').next().unwrap_or("");
+            if id.parse::<u64>().is_ok() {
+                target.set_query(Some(&format!("room={id}")));
+            }
+        }
+        "auth" if matches!(path, "social/callback" | "social/complete") => {
+            target.set_path(&format!("/auth/{path}"));
+            if let Some(query) = deep_link.query() {
+                target.set_query(Some(query));
+            }
+        }
+        _ => return None,
+    }
+
+    Some(target.to_string())
+}
+
+fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
+    let args: Vec<String> = std::env::args().collect();
+    let initial_url = initial_remote_url(&args);
+
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(initial_url))
+        .title("stemred")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(390.0, 560.0)
+        .resizable(true)
+        .decorations(false)
+        .shadow(true)
+        .initialization_script("document.documentElement.classList.add('stem-desktop-frameless');")
+        .on_navigation(|url| is_allowed_navigation_url(url))
+        .build()
+}
+
+fn initial_remote_url(args: &[String]) -> Url {
+    let target = capture_argv_deep_link(args)
+        .and_then(|raw| resolve_stem_deep_link(&raw, DEFAULT_REMOTE_URL))
+        .unwrap_or_else(|| DEFAULT_REMOTE_URL.to_string());
+
+    let mut url = Url::parse(&target).unwrap_or_else(|_| {
+        Url::parse(DEFAULT_REMOTE_URL).expect("default remote URL must be valid")
+    });
+    url.query_pairs_mut()
+        .append_pair("_stem_desktop_shell", env!("CARGO_PKG_VERSION"))
+        .append_pair("_stem_desktop_start", &desktop_start_counter());
+    url
+}
+
+fn desktop_start_counter() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
+fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let app_handle = app.handle().clone();
+    let menu = build_tray_menu(&app_handle)?;
+
+    let mut tray = TrayIconBuilder::with_id("stem-main")
+        .tooltip("stemred")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => show_main_window(tray.app_handle()),
+            _ => {}
+        })
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main_window(app),
+            "retry" => retry_main_window(app),
+            "microphone_access" => {
+                let next_enabled = app
+                    .try_state::<DesktopState>()
+                    .and_then(|state| microphone_access_enabled(&state).ok())
+                    .map(|enabled| !enabled)
+                    .unwrap_or(true);
+                let _ = set_microphone_access(app, next_enabled);
+            }
+            "autostart" => {
+                let next_enabled = !platform_autostart::is_enabled(app).unwrap_or(false);
+                if platform_autostart::set_enabled(app, next_enabled).is_ok() {
+                    let _ = refresh_tray_menu(app);
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+
+    Ok(())
+}
+
+fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let microphone_enabled = app
+        .try_state::<DesktopState>()
+        .and_then(|state| microphone_access_enabled(&state).ok())
+        .unwrap_or(true);
+    let autostart_enabled = platform_autostart::is_enabled(app).unwrap_or(false);
+
+    let open = MenuItem::with_id(app, "open", "Открыть stemred", true, None::<&str>)?;
+    let retry = MenuItem::with_id(app, "retry", "Повторить подключение", true, None::<&str>)?;
+    let microphone = CheckMenuItem::with_id(
+        app,
+        "microphone_access",
+        "Микрофон разрешён",
+        true,
+        microphone_enabled,
+        None::<&str>,
+    )?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "Запускать с Windows",
+        true,
+        autostart_enabled,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
+
+    let items: [&dyn IsMenuItem<tauri::Wry>; 5] = [&open, &retry, &microphone, &autostart, &quit];
+    Menu::with_items(app, &items)
+}
+
+fn refresh_tray_menu(app: &AppHandle) -> Result<(), String> {
+    let menu = build_tray_menu(app).map_err(|error| error.to_string())?;
+    if let Some(tray) = app.tray_by_id("stem-main") {
+        tray.set_menu(Some(menu))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn retry_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval("window.location.replace('https://chat-stem.ru/')");
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())
+}
+
+fn microphone_access_enabled(state: &tauri::State<'_, DesktopState>) -> Result<bool, String> {
+    state
+        .microphone_access_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .map_err(|_| "microphone access state is unavailable".to_string())
+}
+
+fn set_microphone_access(app: &AppHandle, enabled: bool) -> Result<bool, String> {
+    let state = app.state::<DesktopState>();
+    {
+        let mut current = state
+            .microphone_access_enabled
+            .lock()
+            .map_err(|_| "microphone access state is unavailable".to_string())?;
+        *current = enabled;
+    }
+
+    app.emit(
+        "stem://microphone-access-changed",
+        MicrophoneAccessChanged { enabled },
+    )
+    .ok();
+    let _ = refresh_tray_menu(app);
+    Ok(enabled)
+}
+
+fn handle_deep_link(app: &AppHandle, raw: &str) {
+    let Some(target) = resolve_stem_deep_link(raw, DEFAULT_REMOTE_URL) else {
+        return;
+    };
+
+    if let Some(window) = app.get_webview_window("main") {
+        let escaped = serde_json::to_string(&target).unwrap_or_else(|_| "\"/\"".to_string());
+        let _ = window.eval(&format!("window.location.replace({escaped})"));
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    app.emit("stem://open-url", raw.to_string()).ok();
+}
+
+fn capture_argv_deep_link(args: &[String]) -> Option<String> {
+    args.iter().find(|arg| arg.starts_with("stem://")).cloned()
+}
+
+#[cfg(windows)]
+mod platform_autostart {
+    use std::io;
+
+    use tauri::AppHandle;
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    use super::AUTOSTART_REG_VALUE;
+
+    const AUTOSTART_REG_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const AUTOSTART_STATE_REG_PATH: &str = r"Software\STEM\Messenger\Desktop";
+    const AUTOSTART_INITIALIZED_VALUE: &str = "AutostartInitialized";
+
+    pub fn ensure_default_enabled_once(app: &AppHandle) -> Result<(), String> {
+        if is_initialized()? {
+            return Ok(());
+        }
+
+        if !is_enabled(app)? {
+            write_enabled(app, true)?;
+        }
+
+        set_initialized()
+    }
+
+    pub fn is_enabled(app: &AppHandle) -> Result<bool, String> {
+        let run_key = open_run_key(false)?;
+        let value = match run_key.get_value::<String, _>(AUTOSTART_REG_VALUE) {
+            Ok(value) => value,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.to_string()),
+        };
+
+        if value.trim().is_empty() {
+            return Ok(false);
+        }
+
+        let expected = autostart_command(app)?;
+        Ok(value.eq_ignore_ascii_case(&expected))
+    }
+
+    pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+        write_enabled(app, enabled)?;
+        set_initialized()
+    }
+
+    fn write_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+        let run_key = open_run_key(true)?;
+        if enabled {
+            run_key
+                .set_value(AUTOSTART_REG_VALUE, &autostart_command(app)?)
+                .map_err(|error| error.to_string())?;
+        } else {
+            match run_key.delete_value(AUTOSTART_REG_VALUE) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn open_run_key(write: bool) -> Result<RegKey, String> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if write {
+            hkcu.create_subkey(AUTOSTART_REG_PATH)
+                .map(|(key, _)| key)
+                .map_err(|error| error.to_string())
+        } else {
+            hkcu.open_subkey(AUTOSTART_REG_PATH)
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    fn autostart_command(_app: &AppHandle) -> Result<String, String> {
+        let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+        Ok(format!("\"{}\"", exe.display()))
+    }
+
+    fn is_initialized() -> Result<bool, String> {
+        let state_key = match open_state_key(false) {
+            Ok(key) => key,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.to_string()),
+        };
+
+        match state_key.get_value::<u32, _>(AUTOSTART_INITIALIZED_VALUE) {
+            Ok(value) => Ok(value != 0),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn set_initialized() -> Result<(), String> {
+        open_state_key(true)
+            .map_err(|error| error.to_string())?
+            .set_value(AUTOSTART_INITIALIZED_VALUE, &1u32)
+            .map_err(|error| error.to_string())
+    }
+
+    fn open_state_key(write: bool) -> Result<RegKey, io::Error> {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if write {
+            hkcu.create_subkey(AUTOSTART_STATE_REG_PATH)
+                .map(|(key, _)| key)
+        } else {
+            hkcu.open_subkey(AUTOSTART_STATE_REG_PATH)
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod platform_autostart {
+    use tauri::AppHandle;
+
+    pub fn ensure_default_enabled_once(_app: &AppHandle) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn is_enabled(_app: &AppHandle) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    pub fn set_enabled(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+        Err("Autostart is only supported on Windows".to_string())
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .manage(DesktopState::default())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(raw) = capture_argv_deep_link(&argv) {
+                if let Some(state) = app.try_state::<DesktopState>() {
+                    if let Ok(mut pending) = state.pending_deep_link.lock() {
+                        *pending = Some(raw.clone());
+                    }
+                }
+                handle_deep_link(app, &raw);
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            bootstrap,
+            resolve_deep_link,
+            take_pending_deep_link,
+            open_external_url,
+            set_unread_count,
+            get_autostart_enabled,
+            set_autostart_enabled,
+            get_microphone_access_enabled,
+            set_microphone_access_enabled,
+            minimize_desktop_window,
+            toggle_desktop_window_maximized,
+            close_desktop_window_to_tray,
+            check_desktop_shell_update,
+            install_desktop_shell_update,
+            show_desktop_notification,
+            save_file_to_downloads_stem
+        ])
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            let _ = platform_autostart::ensure_default_enabled_once(&app_handle);
+
+            create_main_window(app)?;
+            create_tray(app)?;
+
+            #[cfg(any(windows, target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                app.deep_link().register_all()?;
+            }
+
+            let args: Vec<String> = std::env::args().collect();
+            if let Some(raw) = capture_argv_deep_link(&args) {
+                if let Some(state) = app.try_state::<DesktopState>() {
+                    if let Ok(mut pending) = state.pending_deep_link.lock() {
+                        *pending = Some(raw);
+                    }
+                }
+            }
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running STEM desktop shell");
+}

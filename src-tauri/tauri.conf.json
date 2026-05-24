@@ -1,0 +1,64 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "stemred",
+  "version": "0.1.8",
+  "identifier": "ru.chat-stem.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev:web",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build:web",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "capabilities": ["desktop"],
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https://chat-stem.ru wss://chat-stem.ru; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "publisher": "Интеллектуальные системы - Квант",
+    "homepage": "https://isquantum.ru/",
+    "copyright": "Copyright © 2026 Интеллектуальные системы - Квант",
+    "shortDescription": "stemred desktop application",
+    "longDescription": "stemred desktop application for Windows.",
+    "licenseFile": "windows/LICENSE.txt",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": ["Russian", "English"],
+        "customLanguageFiles": {
+          "Russian": "windows/languages/Russian.nsh",
+          "English": "windows/languages/English.nsh"
+        },
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["stem"]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1RUZGNzhGQjkzODZBRDUKUldUVmFqaTVqL2Z2NWJrbk5TVDdUK2V2alNXa3dRK2FKMzYxMUZ4UXBidUdMYUVFUHBtd0lIM1YK",
+      "endpoints": ["https://chat-stem.ru/api/desktop/update/{{target}}/{{arch}}/{{current_version}}"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
