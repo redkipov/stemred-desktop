@@ -19,6 +19,163 @@ type BootstrapResult = {
   message?: string;
 };
 
+type ShellLocale = 'en' | 'ru' | 'es' | 'ar' | 'fr';
+
+const SHELL_LOCALES = ['en', 'ru', 'es', 'ar', 'fr'] as const;
+const SHELL_INTL_LOCALES: Record<ShellLocale, string> = {
+  en: 'en-US',
+  ru: 'ru-RU',
+  es: 'es-ES',
+  ar: 'ar-SA',
+  fr: 'fr-FR',
+};
+const SHELL_TRANSLATIONS: Record<string, Record<Exclude<ShellLocale, 'ru'>, string>> = {
+  'Доступно обновление': {
+    en: 'Update available',
+    es: 'Actualización disponible',
+    ar: 'يتوفر تحديث',
+    fr: 'Mise à jour disponible',
+  },
+  'Загрузка обновления': {
+    en: 'Downloading update',
+    es: 'Descargando actualización',
+    ar: 'جار تنزيل التحديث',
+    fr: 'Téléchargement de la mise à jour',
+  },
+  'Можно продолжить работу сейчас или установить новую версию оболочки.': {
+    en: 'You can continue now or install the new shell version.',
+    es: 'Puedes continuar ahora o instalar la nueva versión de la shell.',
+    ar: 'يمكنك المتابعة الآن أو تثبيت إصدار الغلاف الجديد.',
+    fr: 'Vous pouvez continuer maintenant ou installer la nouvelle version de l’enveloppe.',
+  },
+  'Не удалось обновить': {
+    en: 'Update failed',
+    es: 'No se pudo actualizar',
+    ar: 'تعذر التحديث',
+    fr: 'Échec de la mise à jour',
+  },
+  'Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.': {
+    en: 'Could not load app configuration. Check your network and try again.',
+    es: 'No se pudo cargar la configuración de la app. Comprueba la red e inténtalo de nuevo.',
+    ar: 'تعذر تحميل إعدادات التطبيق. تحقق من الشبكة وحاول مرة أخرى.',
+    fr: 'Impossible de charger la configuration de l’application. Vérifiez le réseau puis réessayez.',
+  },
+  'Обновление не найдено': {
+    en: 'Update not found',
+    es: 'Actualización no encontrada',
+    ar: 'لم يتم العثور على تحديث',
+    fr: 'Mise à jour introuvable',
+  },
+  'Обновление установлено. Перезапускаем приложение.': {
+    en: 'Update installed. Restarting the app.',
+    es: 'Actualización instalada. Reiniciando la app.',
+    ar: 'تم تثبيت التحديث. جار إعادة تشغيل التطبيق.',
+    fr: 'Mise à jour installée. Redémarrage de l’application.',
+  },
+  'Оболочка stemred': {
+    en: 'stemred shell',
+    es: 'Shell de stemred',
+    ar: 'غلاف stemred',
+    fr: 'Enveloppe stemred',
+  },
+  'Обновить': {
+    en: 'Update',
+    es: 'Actualizar',
+    ar: 'تحديث',
+    fr: 'Mettre à jour',
+  },
+  'Открываем stemred': {
+    en: 'Opening stemred',
+    es: 'Abriendo stemred',
+    ar: 'جار فتح stemred',
+    fr: 'Ouverture de stemred',
+  },
+  'Открыть приложение': {
+    en: 'Open app',
+    es: 'Abrir aplicación',
+    ar: 'فتح التطبيق',
+    fr: 'Ouvrir l’application',
+  },
+  'Подключение к stemred': {
+    en: 'Connecting to stemred',
+    es: 'Conectando a stemred',
+    ar: 'جار الاتصال بـ stemred',
+    fr: 'Connexion à stemred',
+  },
+  'Повторить': {
+    en: 'Retry',
+    es: 'Reintentar',
+    ar: 'إعادة المحاولة',
+    fr: 'Réessayer',
+  },
+  'Проверяем конфигурацию сервера и версию оболочки.': {
+    en: 'Checking server configuration and shell version.',
+    es: 'Comprobando la configuración del servidor y la versión de la shell.',
+    ar: 'جار التحقق من إعدادات الخادم وإصدار الغلاف.',
+    fr: 'Vérification de la configuration du serveur et de la version de l’enveloppe.',
+  },
+  'Свернуть': {
+    en: 'Minimize',
+    es: 'Minimizar',
+    ar: 'تصغير',
+    fr: 'Réduire',
+  },
+  'Развернуть': {
+    en: 'Maximize',
+    es: 'Maximizar',
+    ar: 'تكبير',
+    fr: 'Agrandir',
+  },
+  'Сервер доступен. Сейчас откроется актуальная веб-версия.': {
+    en: 'Server is available. The current web version will open now.',
+    es: 'El servidor está disponible. Ahora se abrirá la versión web actual.',
+    ar: 'الخادم متاح. سيتم فتح إصدار الويب الحالي الآن.',
+    fr: 'Le serveur est disponible. La version web actuelle va s’ouvrir.',
+  },
+  'Сервер недоступен': {
+    en: 'Server unavailable',
+    es: 'Servidor no disponible',
+    ar: 'الخادم غير متاح',
+    fr: 'Serveur indisponible',
+  },
+  'Скрыть в трей': {
+    en: 'Hide to tray',
+    es: 'Ocultar en bandeja',
+    ar: 'إخفاء إلى علبة النظام',
+    fr: 'Masquer dans la zone de notification',
+  },
+  'Скачиваем и устанавливаем новую версию оболочки.': {
+    en: 'Downloading and installing the new shell version.',
+    es: 'Descargando e instalando la nueva versión de la shell.',
+    ar: 'جار تنزيل وتثبيت إصدار الغلاف الجديد.',
+    fr: 'Téléchargement et installation de la nouvelle version de l’enveloppe.',
+  },
+  'Скачиваем обновление.': {
+    en: 'Downloading update.',
+    es: 'Descargando actualización.',
+    ar: 'جار تنزيل التحديث.',
+    fr: 'Téléchargement de la mise à jour.',
+  },
+  'Сервер обновлений не вернул новую версию для этой платформы.': {
+    en: 'The update server did not return a new version for this platform.',
+    es: 'El servidor de actualizaciones no devolvió una nueva versión para esta plataforma.',
+    ar: 'لم يرجع خادم التحديثات إصدارًا جديدًا لهذه المنصة.',
+    fr: 'Le serveur de mises à jour n’a renvoyé aucune nouvelle version pour cette plateforme.',
+  },
+  'Требуется обновление': {
+    en: 'Update required',
+    es: 'Actualización requerida',
+    ar: 'التحديث مطلوب',
+    fr: 'Mise à jour requise',
+  },
+  'Эта версия оболочки устарела и должна быть обновлена перед запуском.': {
+    en: 'This shell version is outdated and must be updated before launch.',
+    es: 'Esta versión de la shell está obsoleta y debe actualizarse antes de iniciar.',
+    ar: 'إصدار الغلاف هذا قديم ويجب تحديثه قبل التشغيل.',
+    fr: 'Cette version de l’enveloppe est obsolète et doit être mise à jour avant le lancement.',
+  },
+};
+
 const titleEl = document.querySelector<HTMLHeadingElement>('#title')!;
 const messageEl = document.querySelector<HTMLParagraphElement>('#message')!;
 const detailsEl = document.querySelector<HTMLParagraphElement>('#details')!;
@@ -41,6 +198,49 @@ let windowControlsArmed = false;
 let windowControlsHideTimer = 0;
 let lastPointerX = Number.NaN;
 let lastPointerY = Number.NaN;
+let shellLocale = detectShellLocale();
+
+function detectShellLocale(): ShellLocale {
+  const candidates = [...(navigator.languages || []), navigator.language].filter(Boolean);
+  for (const candidate of candidates) {
+    const locale = String(candidate).trim().toLowerCase().replace('_', '-').split('-')[0];
+    if ((SHELL_LOCALES as readonly string[]).includes(locale)) return locale as ShellLocale;
+  }
+  return 'en';
+}
+
+function t(source: string): string {
+  if (shellLocale === 'ru') return source;
+  return SHELL_TRANSLATIONS[source]?.[shellLocale] || source;
+}
+
+function applyShellLanguage() {
+  document.documentElement.lang = SHELL_INTL_LOCALES[shellLocale];
+  document.documentElement.dir = shellLocale === 'ar' ? 'rtl' : 'ltr';
+  document.querySelector('.eyebrow')!.textContent = t('Оболочка stemred');
+  retryButton.textContent = t('Повторить');
+  openButton.textContent = t('Открыть приложение');
+  updateButton.textContent = t('Обновить');
+  minimizeButton.setAttribute('aria-label', t('Свернуть'));
+  maximizeButton.setAttribute('aria-label', t('Развернуть'));
+  closeButton.setAttribute('aria-label', t('Скрыть в трей'));
+}
+
+function downloadMbMessage(megabytes: number): string {
+  if (shellLocale === 'ru') return `Скачиваем ${megabytes} МБ.`;
+  if (shellLocale === 'es') return `Descargando ${megabytes} MB.`;
+  if (shellLocale === 'ar') return `جار تنزيل ${megabytes} م.ب.`;
+  if (shellLocale === 'fr') return `Téléchargement de ${megabytes} Mo.`;
+  return `Downloading ${megabytes} MB.`;
+}
+
+function downloadedKbMessage(kilobytes: number): string {
+  if (shellLocale === 'ru') return `Скачано ${kilobytes} КБ.`;
+  if (shellLocale === 'es') return `Descargado ${kilobytes} KB.`;
+  if (shellLocale === 'ar') return `تم تنزيل ${kilobytes} ك.ب.`;
+  if (shellLocale === 'fr') return `${kilobytes} Ko téléchargés.`;
+  return `Downloaded ${kilobytes} KB.`;
+}
 
 function setBusy(isBusy: boolean) {
   progressEl.hidden = !isBusy;
@@ -99,9 +299,9 @@ function installWindowControlsAutoReveal() {
 
 function describeBuild(result: BootstrapResult): string {
   return [
-    `Оболочка ${result.current_shell_version}`,
-    `минимум ${result.min_shell_version}`,
-    `рекомендовано ${result.recommended_shell_version}`,
+    `${shellLocale === 'ru' ? 'Оболочка' : shellLocale === 'es' ? 'Shell' : shellLocale === 'ar' ? 'الغلاف' : shellLocale === 'fr' ? 'Enveloppe' : 'Shell'} ${result.current_shell_version}`,
+    `${shellLocale === 'ru' ? 'минимум' : shellLocale === 'es' ? 'mínimo' : shellLocale === 'ar' ? 'الحد الأدنى' : shellLocale === 'fr' ? 'minimum' : 'minimum'} ${result.min_shell_version}`,
+    `${shellLocale === 'ru' ? 'рекомендовано' : shellLocale === 'es' ? 'recomendado' : shellLocale === 'ar' ? 'موصى به' : shellLocale === 'fr' ? 'recommandé' : 'recommended'} ${result.recommended_shell_version}`,
     `web ${result.web_build_id}`,
     `api ${result.api_build_id}`,
   ].join(' · ');
@@ -144,8 +344,8 @@ async function navigateToRemote(result: BootstrapResult) {
 async function bootstrap() {
   setBusy(true);
   setButtons();
-  titleEl.textContent = 'Подключение к stemred';
-  messageEl.textContent = 'Проверяем конфигурацию сервера и версию оболочки.';
+  titleEl.textContent = t('Подключение к stemred');
+  messageEl.textContent = t('Проверяем конфигурацию сервера и версию оболочки.');
   detailsEl.textContent = '';
 
   try {
@@ -154,33 +354,33 @@ async function bootstrap() {
     detailsEl.textContent = describeBuild(result);
 
     if (result.state === 'ready') {
-      titleEl.textContent = 'Открываем stemred';
-      messageEl.textContent = 'Сервер доступен. Сейчас откроется актуальная веб-версия.';
+      titleEl.textContent = t('Открываем stemred');
+      messageEl.textContent = t('Сервер доступен. Сейчас откроется актуальная веб-версия.');
       await navigateToRemote(result);
       return;
     }
 
     if (result.state === 'update_available') {
-      titleEl.textContent = 'Доступно обновление';
-      messageEl.textContent = 'Можно продолжить работу сейчас или установить новую версию оболочки.';
+      titleEl.textContent = t('Доступно обновление');
+      messageEl.textContent = t('Можно продолжить работу сейчас или установить новую версию оболочки.');
       setButtons('open', 'update', 'retry');
       return;
     }
 
     if (result.state === 'update_required') {
-      titleEl.textContent = 'Требуется обновление';
-      messageEl.textContent = 'Эта версия оболочки устарела и должна быть обновлена перед запуском.';
+      titleEl.textContent = t('Требуется обновление');
+      messageEl.textContent = t('Эта версия оболочки устарела и должна быть обновлена перед запуском.');
       setButtons('update', 'retry');
       return;
     }
 
-    titleEl.textContent = 'Сервер недоступен';
-    messageEl.textContent = result.message || 'Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.';
+    titleEl.textContent = t('Сервер недоступен');
+    messageEl.textContent = result.message || t('Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.');
     setButtons('retry');
   } catch (error) {
     latestBootstrap = null;
-    titleEl.textContent = 'Сервер недоступен';
-    messageEl.textContent = 'Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.';
+    titleEl.textContent = t('Сервер недоступен');
+    messageEl.textContent = t('Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.');
     detailsEl.textContent = error instanceof Error ? error.message : String(error || '');
     setButtons('retry');
   } finally {
@@ -191,14 +391,14 @@ async function bootstrap() {
 async function installUpdate() {
   setBusy(true);
   setButtons();
-  titleEl.textContent = 'Загрузка обновления';
-  messageEl.textContent = 'Скачиваем и устанавливаем новую версию оболочки.';
+  titleEl.textContent = t('Загрузка обновления');
+  messageEl.textContent = t('Скачиваем и устанавливаем новую версию оболочки.');
 
   try {
     const update = await check();
     if (!update) {
-      titleEl.textContent = 'Обновление не найдено';
-      messageEl.textContent = 'Сервер обновлений не вернул новую версию для этой платформы.';
+      titleEl.textContent = t('Обновление не найдено');
+      messageEl.textContent = t('Сервер обновлений не вернул новую версию для этой платформы.');
       setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry');
       return;
     }
@@ -206,18 +406,18 @@ async function installUpdate() {
     await update.downloadAndInstall((event) => {
       if (event.event === 'Started') {
         const contentLength = Number(event.data.contentLength || 0);
-        messageEl.textContent = contentLength > 0 ? `Скачиваем ${Math.round(contentLength / 1024 / 1024)} МБ.` : 'Скачиваем обновление.';
+        messageEl.textContent = contentLength > 0 ? downloadMbMessage(Math.round(contentLength / 1024 / 1024)) : t('Скачиваем обновление.');
       } else if (event.event === 'Progress') {
-        messageEl.textContent = `Скачано ${Math.round(event.data.chunkLength / 1024)} КБ.`;
+        messageEl.textContent = downloadedKbMessage(Math.round(event.data.chunkLength / 1024));
       } else if (event.event === 'Finished') {
-        messageEl.textContent = 'Обновление установлено. Перезапускаем приложение.';
+        messageEl.textContent = t('Обновление установлено. Перезапускаем приложение.');
       }
     });
 
     await relaunch();
   } catch (error) {
-    titleEl.textContent = 'Не удалось обновить';
-    messageEl.textContent = error instanceof Error ? error.message : String(error || 'Ошибка обновления');
+    titleEl.textContent = t('Не удалось обновить');
+    messageEl.textContent = error instanceof Error ? error.message : String(error || t('Не удалось обновить'));
     setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry', 'update');
   } finally {
     setBusy(false);
@@ -254,5 +454,6 @@ void onOpenUrl((urls) => {
   if (latestBootstrap) void navigateToRemote(latestBootstrap);
 });
 
+applyShellLanguage();
 installWindowControlsAutoReveal();
 void resolveInitialDeepLink().then(bootstrap);

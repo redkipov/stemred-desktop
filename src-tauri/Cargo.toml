@@ -1,6 +1,6 @@
 [package]
 name = "stem_desktop"
-version = "0.1.9"
+version = "0.1.10"
 description = "stemred desktop shell"
 authors = ["Интеллектуальные системы - Квант"]
 license = "MIT"
