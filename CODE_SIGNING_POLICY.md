@@ -4,7 +4,7 @@ Free code signing for official open-source releases is intended to be provided t
 
 ## Project
 
-- Project name: STEM Messenger Desktop
+- Project name: StemRed Desktop
 - Repository: https://github.com/redkipov/stemred-desktop
 - License: MIT
 - Privacy policy: `PRIVACY.md` and https://chat-stem.ru/privacy

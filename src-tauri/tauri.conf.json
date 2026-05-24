@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "stemred",
-  "version": "0.1.10",
+  "productName": "StemRed",
+  "version": "0.1.11",
   "identifier": "ru.chat-stem.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:web",
@@ -25,8 +25,8 @@
     "publisher": "Интеллектуальные системы - Квант",
     "homepage": "https://isquantum.ru/",
     "copyright": "Copyright © 2026 Интеллектуальные системы - Квант",
-    "shortDescription": "stemred desktop application",
-    "longDescription": "stemred desktop application for Windows.",
+    "shortDescription": "StemRed desktop application",
+    "longDescription": "StemRed desktop application for Windows.",
     "licenseFile": "windows/LICENSE.txt",
     "windows": {
       "webviewInstallMode": {

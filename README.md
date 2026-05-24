@@ -1,6 +1,6 @@
-# STEM Messenger Desktop
+# StemRed Desktop
 
-Open-source Tauri v2 desktop shell for STEM Messenger. Windows 10-11 is the primary target; the same shell path can be reused for macOS later.
+Open-source Tauri v2 desktop shell for StemRed. Windows 10-11 is the primary target; the same shell path can be reused for macOS later.
 
 License: MIT. See `LICENSE`.
 

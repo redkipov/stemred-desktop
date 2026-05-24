@@ -71,10 +71,10 @@ FunctionEnd
   ${If} ${Errors}
     Call StemInstallOptionsDefaults
     ${If} $StemAutostartState == ${BST_CHECKED}
-      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "STEM Messenger"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StemRed"
       WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "stemred" "$\"$INSTDIR\stem_desktop.exe$\""
     ${Else}
-      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "STEM Messenger"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StemRed"
       DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "stemred"
     ${EndIf}
     WriteRegDWORD HKCU "Software\STEM\Messenger\Desktop" "AutostartInitialized" 1

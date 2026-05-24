@@ -1,8 +1,8 @@
 # Privacy Policy
 
-STEM Messenger Desktop is a native shell for the STEM web messenger at `https://chat-stem.ru/`.
+StemRed Desktop is a native shell for StemRed at `https://chat-stem.ru/`.
 
-The desktop shell itself does not operate a separate user database and does not sell personal data. It loads the STEM web client, stores normal WebView session data on the user's device, and communicates with `chat-stem.ru` for messenger features.
+The desktop shell itself does not operate a separate user database and does not sell personal data. It loads the StemRed web client, stores normal WebView session data on the user's device, and communicates with `chat-stem.ru` for messenger features.
 
 The application may request operating system permissions for notifications, microphone access, geolocation and network access when the corresponding messenger feature is used.
 
