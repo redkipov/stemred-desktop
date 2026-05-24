@@ -15,7 +15,13 @@ if (-not (Test-Path $tauriCli)) {
 }
 
 function Get-LatestNsisInstaller {
-  $bundleDir = Resolve-Path (Join-Path $PSScriptRoot "..\src-tauri\target\release\bundle\nsis") -ErrorAction SilentlyContinue
+  $targetRoot = if ($env:CARGO_TARGET_DIR) {
+    $env:CARGO_TARGET_DIR
+  } else {
+    Join-Path $PSScriptRoot "..\src-tauri\target"
+  }
+
+  $bundleDir = Resolve-Path (Join-Path $targetRoot "release\bundle\nsis") -ErrorAction SilentlyContinue
   if (-not $bundleDir) {
     throw "NSIS bundle directory was not found."
   }
@@ -48,7 +54,7 @@ function Assert-PublicInstallerSignature {
   }
 
   if ($signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer) {
-    throw "Installer is signed by a self-signed certificate. Microsoft Store requires a public trusted code signing certificate."
+    throw "Installer is not signed by a public trusted code signing certificate."
   }
 }
 
@@ -135,35 +141,13 @@ if (($artifactDlib -and -not $artifactMetadata) -or ($artifactMetadata -and -not
   throw "Artifact Signing is incomplete: set STEM_CODESIGN_ARTIFACT_DLIB and STEM_CODESIGN_ARTIFACT_METADATA."
 }
 
-$allowLocalCodeSigning = $env:STEM_ALLOW_LOCAL_CODESIGN -eq "1"
-if ($MicrosoftStore -and $allowLocalCodeSigning) {
-  throw "Microsoft Store build cannot use local self-signed code signing. Configure public code signing first."
-}
-
-if (-not $env:STEM_CODESIGN_THUMBPRINT -and -not $env:STEM_CODESIGN_PFX -and -not $hasArtifactSigningConfig -and $allowLocalCodeSigning) {
-  $defaultCodeSigningThumbprint = "6794A2C99DE2F5363E56F8384F905159E2E903AE"
-  $localCodeSigningCert = Get-Item "Cert:\CurrentUser\My\$defaultCodeSigningThumbprint" -ErrorAction SilentlyContinue
-  if (-not $localCodeSigningCert) {
-    $localCodeSigningCert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
-      Where-Object { $_.Subject -eq "CN=STEM Messenger Local Code Signing" -and $_.HasPrivateKey } |
-      Sort-Object NotAfter -Descending |
-      Select-Object -First 1
-  }
-
-  if ($localCodeSigningCert) {
-    $env:STEM_CODESIGN_THUMBPRINT = $localCodeSigningCert.Thumbprint
-  } else {
-    $env:STEM_CODESIGN_THUMBPRINT = $defaultCodeSigningThumbprint
-  }
-}
-
 $hasSigningConfig = $env:STEM_CODESIGN_THUMBPRINT -or $env:STEM_CODESIGN_PFX -or $hasArtifactSigningConfig
 if (-not $hasSigningConfig) {
   if ($MicrosoftStore) {
-    throw "Microsoft Store code signing is not configured. Set STEM_CODESIGN_ARTIFACT_DLIB/STEM_CODESIGN_ARTIFACT_METADATA, STEM_CODESIGN_PFX, or STEM_CODESIGN_THUMBPRINT. Self-signed certificates are not accepted."
+    throw "Microsoft Store code signing is not configured. Set STEM_CODESIGN_ARTIFACT_DLIB/STEM_CODESIGN_ARTIFACT_METADATA, STEM_CODESIGN_PFX, or STEM_CODESIGN_THUMBPRINT."
   }
 
-  throw "Public code signing is not configured. Set STEM_CODESIGN_ARTIFACT_DLIB/STEM_CODESIGN_ARTIFACT_METADATA, STEM_CODESIGN_PFX, or STEM_CODESIGN_THUMBPRINT. For local testing only, set STEM_ALLOW_LOCAL_CODESIGN=1."
+  Write-Warning "Public code signing is not configured. Building an unsigned installer."
 }
 
 $signConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stem-tauri-sign-{0}.json" -f ([System.Guid]::NewGuid().ToString("N")))

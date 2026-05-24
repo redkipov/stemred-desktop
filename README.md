@@ -38,7 +38,7 @@ Generated folders and release artifacts are not part of the source release:
 
 ## Code signing
 
-Public Windows installers must be signed with a certificate that chains to a public trusted CA or Microsoft Artifact Signing. The local self-signed certificate is only for development; it does not build SmartScreen reputation for public users.
+Public Windows installers should be signed with a certificate that chains to a public trusted CA, Microsoft Artifact Signing, or an approved SignPath release policy. Until that is configured, GitHub release installers are built unsigned.
 
 Recommended low-cost public signing path when the publisher is eligible for Microsoft Artifact Signing:
 
@@ -57,16 +57,9 @@ $env:STEM_CODESIGN_PFX_PASSWORD = "..."
 npm run build
 ```
 
-Local test signing is explicit:
-
-```powershell
-$env:STEM_ALLOW_LOCAL_CODESIGN = "1"
-npm run build
-```
-
 Official open-source release signing is planned through SignPath Foundation after project approval. See `CODE_SIGNING_POLICY.md`.
 
-Microsoft Store build uses a separate offline installer configuration and refuses local self-signed certificates:
+Microsoft Store build uses a separate offline installer configuration and requires public code signing:
 
 ```powershell
 npm run build:store
