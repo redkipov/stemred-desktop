@@ -13,4 +13,4 @@ src-tauri/tauri.windows.conf.json
 *.p12
 *.key
 *Private*.cer
-*Local Code Signing.cer
+*.cer
