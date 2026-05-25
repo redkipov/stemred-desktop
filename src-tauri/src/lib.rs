@@ -20,6 +20,7 @@ const DEFAULT_REMOTE_URL: &str = "https://chat-stem.ru/messages";
 const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
 const REMOTE_HOST: &str = "chat-stem.ru";
 const AUTOSTART_REG_VALUE: &str = "stemred";
+const DESKTOP_NOTIFICATION_RECENT_LIMIT: usize = 128;
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 (() => {
@@ -187,18 +188,50 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
       height: 34px !important;
       min-height: 34px !important;
       place-items: center !important;
-      border: 1px solid color-mix(in srgb, #2dd4bf 66%, var(--stem-border, rgba(255,255,255,0.18))) !important;
+      overflow: hidden !important;
+      border: 1px solid color-mix(in srgb, #f59e0b 72%, var(--stem-border, rgba(255,255,255,0.18))) !important;
       border-radius: 999px !important;
       padding: 0 !important;
-      color: #eafffb !important;
+      color: #ffd56a !important;
       background:
-        radial-gradient(circle at 34% 22%, rgba(255,255,255,0.34), transparent 34%),
-        linear-gradient(135deg, #10b981, #22d3ee) !important;
-      box-shadow: 0 0 18px rgba(34, 211, 238, 0.24) !important;
+        radial-gradient(circle at 34% 22%, rgba(255,255,255,0.24), transparent 32%),
+        linear-gradient(135deg, #3a2606, #a66305 48%, #f59e0b) !important;
+      box-shadow: 0 0 18px rgba(245, 158, 11, 0.28) !important;
       font: inherit !important;
-      font-size: 15px !important;
+      font-size: 18px !important;
+      font-weight: 900 !important;
       line-height: 1 !important;
       cursor: pointer !important;
+    }
+
+    .stem-desktop-update-button::before {
+      content: '' !important;
+      position: absolute !important;
+      inset: -10px 3px 2px !important;
+      pointer-events: none !important;
+      background-image:
+        radial-gradient(circle, rgba(255, 239, 184, 0.95) 0 1px, transparent 1.4px),
+        radial-gradient(circle, rgba(251, 191, 36, 0.86) 0 1.6px, transparent 2px),
+        radial-gradient(circle, rgba(217, 119, 6, 0.72) 0 2.4px, transparent 3px) !important;
+      background-position:
+        2px 0,
+        12px -36px,
+        5px -44px !important;
+      background-size:
+        18px 28px,
+        23px 36px,
+        31px 44px !important;
+      animation: stem-desktop-gold-dust 2.6s linear infinite !important;
+    }
+
+    .stem-desktop-update-button__icon {
+      position: relative !important;
+      z-index: 1 !important;
+      color: #ffd56a !important;
+      text-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.28),
+        0 0 10px rgba(251, 191, 36, 0.7) !important;
+      transform: translateY(-1px) !important;
     }
 
     .stem-desktop-update-button::after {
@@ -235,6 +268,21 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
     .stem-desktop-update-button:disabled {
       cursor: wait !important;
       opacity: 0.78 !important;
+    }
+
+    @keyframes stem-desktop-gold-dust {
+      0% {
+        background-position:
+          2px 0,
+          12px -36px,
+          5px -44px;
+      }
+      100% {
+        background-position:
+          2px 28px,
+          12px 0,
+          5px 0;
+      }
     }
 
     .stem-native-window-button:hover {
@@ -666,6 +714,7 @@ struct DesktopState {
     pending_deep_link: Mutex<Option<String>>,
     unread_count: Mutex<u32>,
     microphone_access_enabled: Mutex<bool>,
+    recent_notifications: Mutex<Vec<(String, u128)>>,
 }
 
 impl Default for DesktopState {
@@ -674,6 +723,7 @@ impl Default for DesktopState {
             pending_deep_link: Mutex::new(None),
             unread_count: Mutex::new(0),
             microphone_access_enabled: Mutex::new(true),
+            recent_notifications: Mutex::new(Vec::new()),
         }
     }
 }
@@ -710,6 +760,9 @@ struct DesktopShellUpdateStatus {
 struct DesktopNotificationRequest {
     title: String,
     body: Option<String>,
+    dedupe_key: Option<String>,
+    dedupe_ms: Option<u64>,
+    sound: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -902,17 +955,37 @@ async fn check_desktop_shell_update(app: AppHandle) -> Result<DesktopShellUpdate
 }
 
 #[tauri::command]
-async fn install_desktop_shell_update(_app: AppHandle) -> Result<bool, String> {
-    Ok(false)
+async fn install_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
+    let update = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let Some(update) = update else {
+        return Ok(false);
+    };
+
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart()
 }
 
 #[tauri::command]
 fn show_desktop_notification(
     app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
     payload: DesktopNotificationRequest,
 ) -> Result<(), String> {
     let title = payload.title.trim();
     if title.is_empty() {
+        return Ok(());
+    }
+    if is_duplicate_desktop_notification(&state, payload.dedupe_key.as_deref(), payload.dedupe_ms)?
+    {
         return Ok(());
     }
 
@@ -924,6 +997,12 @@ fn show_desktop_notification(
         let body = body.trim();
         if !body.is_empty() {
             notification = notification.body(body.chars().take(240).collect::<String>());
+        }
+    }
+    if let Some(sound) = payload.sound {
+        let sound = sound.trim();
+        if !sound.is_empty() {
+            notification = notification.sound(sound.chars().take(260).collect::<String>());
         }
     }
 
@@ -1193,10 +1272,43 @@ fn initial_remote_url(args: &[String]) -> Url {
 }
 
 fn desktop_start_counter() -> String {
+    desktop_now_millis().to_string()
+}
+
+fn desktop_now_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().to_string())
-        .unwrap_or_else(|_| "0".to_string())
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn is_duplicate_desktop_notification(
+    state: &tauri::State<'_, DesktopState>,
+    dedupe_key: Option<&str>,
+    dedupe_ms: Option<u64>,
+) -> Result<bool, String> {
+    let Some(key) = dedupe_key.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(false);
+    };
+    let window_ms = u128::from(dedupe_ms.unwrap_or(15_000).max(1_000));
+    let now = desktop_now_millis();
+    let mut recent = state
+        .recent_notifications
+        .lock()
+        .map_err(|_| "notification dedupe state is unavailable".to_string())?;
+
+    recent.retain(|(_, seen_at)| now.saturating_sub(*seen_at) <= window_ms);
+    if recent.iter().any(|(seen_key, _)| seen_key == key) {
+        return Ok(true);
+    }
+
+    recent.push((key.to_string(), now));
+    if recent.len() > DESKTOP_NOTIFICATION_RECENT_LIMIT {
+        let overflow = recent.len() - DESKTOP_NOTIFICATION_RECENT_LIMIT;
+        recent.drain(0..overflow);
+    }
+
+    Ok(false)
 }
 
 fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
