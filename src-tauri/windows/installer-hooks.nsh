@@ -18,12 +18,12 @@ Function StemInstallOptionsTexts
     StrCpy $StemOptionsTitle "Параметры установки"
     StrCpy $StemOptionsSubtitle "Выберите, что включить сразу после установки"
     StrCpy $StemOptionsText "Ярлык на рабочем столе и запуск приложения после установки можно отключить на завершающем шаге."
-    StrCpy $StemAutostartText "Запускать stemred вместе с Windows"
+    StrCpy $StemAutostartText "Запускать StemRed вместе с Windows"
   ${Else}
     StrCpy $StemOptionsTitle "Installation options"
     StrCpy $StemOptionsSubtitle "Choose what to enable after installation"
     StrCpy $StemOptionsText "Desktop shortcut and app launch after installation can be disabled on the final step."
-    StrCpy $StemAutostartText "Start stemred with Windows"
+    StrCpy $StemAutostartText "Start StemRed with Windows"
   ${EndIf}
 FunctionEnd
 
@@ -72,10 +72,10 @@ FunctionEnd
     Call StemInstallOptionsDefaults
     ${If} $StemAutostartState == ${BST_CHECKED}
       DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StemRed"
-      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "stemred" "$\"$INSTDIR\stem_desktop.exe$\""
+      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StemRed" "$\"$INSTDIR\stem_desktop.exe$\""
     ${Else}
       DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StemRed"
-      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "stemred"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StemRed"
     ${EndIf}
     WriteRegDWORD HKCU "Software\STEM\Messenger\Desktop" "AutostartInitialized" 1
   ${EndIf}

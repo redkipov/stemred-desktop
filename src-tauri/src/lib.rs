@@ -19,7 +19,7 @@ use url::Url;
 const DEFAULT_REMOTE_URL: &str = "https://chat-stem.ru/messages";
 const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
 const REMOTE_HOST: &str = "chat-stem.ru";
-const AUTOSTART_REG_VALUE: &str = "stemred";
+const AUTOSTART_REG_VALUE: &str = "StemRed";
 const DESKTOP_NOTIFICATION_RECENT_LIMIT: usize = 128;
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
@@ -858,9 +858,9 @@ fn set_unread_count(
 
     if let Some(tray) = app.tray_by_id("stem-main") {
         let tooltip = if count == 0 {
-            "stemred".to_string()
+            "StemRed".to_string()
         } else {
-            format!("stemred - {} unread", count)
+            format!("StemRed - {} unread", count)
         };
         tray.set_tooltip(Some(&tooltip))
             .map_err(|error| error.to_string())?;
@@ -1232,12 +1232,13 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
     let initial_url = initial_remote_url(&args);
 
     WebviewWindowBuilder::new(app, "main", WebviewUrl::External(initial_url))
-        .title("stemred")
+        .title("StemRed")
         .inner_size(1280.0, 820.0)
         .min_inner_size(390.0, 560.0)
         .resizable(true)
         .decorations(false)
         .shadow(true)
+        .disable_drag_drop_handler()
         .initialization_script("document.documentElement.classList.add('stem-desktop-frameless');")
         .on_navigation(|url| is_allowed_navigation_url(url))
         .build()
@@ -1302,7 +1303,7 @@ fn create_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = build_tray_menu(&app_handle)?;
 
     let mut tray = TrayIconBuilder::with_id("stem-main")
-        .tooltip("stemred")
+        .tooltip("StemRed")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| match event {
@@ -1354,7 +1355,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .unwrap_or(true);
     let autostart_enabled = platform_autostart::is_enabled(app).unwrap_or(false);
 
-    let open = MenuItem::with_id(app, "open", "Открыть stemred", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Открыть StemRed", true, None::<&str>)?;
     let retry = MenuItem::with_id(app, "retry", "Повторить подключение", true, None::<&str>)?;
     let microphone = CheckMenuItem::with_id(
         app,

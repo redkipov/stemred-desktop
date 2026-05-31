@@ -1,7 +1,7 @@
 [package]
 name = "stem_desktop"
 version = "0.1.13"
-description = "stemred desktop shell"
+description = "StemRed desktop shell"
 authors = ["Интеллектуальные системы - Квант"]
 license = "MIT"
 homepage = "https://chat-stem.ru/"

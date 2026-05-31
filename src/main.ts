@@ -72,11 +72,11 @@ const SHELL_TRANSLATIONS: Record<string, Record<Exclude<ShellLocale, 'ru'>, stri
     ar: 'تم تثبيت التحديث. جار إعادة تشغيل التطبيق.',
     fr: 'Mise à jour installée. Redémarrage de l’application.',
   },
-  'Оболочка stemred': {
-    en: 'stemred shell',
-    es: 'Shell de stemred',
-    ar: 'غلاف stemred',
-    fr: 'Enveloppe stemred',
+  'Оболочка StemRed': {
+    en: 'StemRed shell',
+    es: 'Shell de StemRed',
+    ar: 'غلاف StemRed',
+    fr: 'Enveloppe StemRed',
   },
   'Обновить': {
     en: 'Update',
@@ -84,11 +84,11 @@ const SHELL_TRANSLATIONS: Record<string, Record<Exclude<ShellLocale, 'ru'>, stri
     ar: 'تحديث',
     fr: 'Mettre à jour',
   },
-  'Открываем stemred': {
-    en: 'Opening stemred',
-    es: 'Abriendo stemred',
-    ar: 'جار فتح stemred',
-    fr: 'Ouverture de stemred',
+  'Открываем StemRed': {
+    en: 'Opening StemRed',
+    es: 'Abriendo StemRed',
+    ar: 'جار فتح StemRed',
+    fr: 'Ouverture de StemRed',
   },
   'Открыть приложение': {
     en: 'Open app',
@@ -96,11 +96,11 @@ const SHELL_TRANSLATIONS: Record<string, Record<Exclude<ShellLocale, 'ru'>, stri
     ar: 'فتح التطبيق',
     fr: 'Ouvrir l’application',
   },
-  'Подключение к stemred': {
-    en: 'Connecting to stemred',
-    es: 'Conectando a stemred',
-    ar: 'جار الاتصال بـ stemred',
-    fr: 'Connexion à stemred',
+  'Подключение к StemRed': {
+    en: 'Connecting to StemRed',
+    es: 'Conectando a StemRed',
+    ar: 'جار الاتصال بـ StemRed',
+    fr: 'Connexion à StemRed',
   },
   'Повторить': {
     en: 'Retry',
@@ -217,7 +217,7 @@ function t(source: string): string {
 function applyShellLanguage() {
   document.documentElement.lang = SHELL_INTL_LOCALES[shellLocale];
   document.documentElement.dir = shellLocale === 'ar' ? 'rtl' : 'ltr';
-  document.querySelector('.eyebrow')!.textContent = t('Оболочка stemred');
+  document.querySelector('.eyebrow')!.textContent = t('Оболочка StemRed');
   retryButton.textContent = t('Повторить');
   openButton.textContent = t('Открыть приложение');
   updateButton.textContent = t('Обновить');
@@ -344,7 +344,7 @@ async function navigateToRemote(result: BootstrapResult) {
 async function bootstrap() {
   setBusy(true);
   setButtons();
-  titleEl.textContent = t('Подключение к stemred');
+  titleEl.textContent = t('Подключение к StemRed');
   messageEl.textContent = t('Проверяем конфигурацию сервера и версию оболочки.');
   detailsEl.textContent = '';
 
@@ -354,7 +354,7 @@ async function bootstrap() {
     detailsEl.textContent = describeBuild(result);
 
     if (result.state === 'ready') {
-      titleEl.textContent = t('Открываем stemred');
+      titleEl.textContent = t('Открываем StemRed');
       messageEl.textContent = t('Сервер доступен. Сейчас откроется актуальная веб-версия.');
       await navigateToRemote(result);
       return;

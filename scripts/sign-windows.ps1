@@ -53,7 +53,7 @@ $args = @(
   "/fd", "SHA256",
   "/td", "SHA256",
   "/tr", $timestampUrl,
-  "/d", "stemred",
+  "/d", "StemRed",
   "/du", "https://chat-stem.ru/"
 )
 
