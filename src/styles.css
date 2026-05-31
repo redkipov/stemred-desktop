@@ -139,15 +139,10 @@ button:disabled {
 }
 
 .mark {
-  display: grid;
+  display: block;
   width: 56px;
   height: 56px;
-  place-items: center;
-  border-radius: 10px;
-  color: white;
-  background: linear-gradient(135deg, #18b9a7, #4d79ff 48%, #e24685);
-  font-size: 28px;
-  font-weight: 850;
+  object-fit: contain;
 }
 
 .eyebrow {

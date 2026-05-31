@@ -188,7 +188,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
       height: 34px !important;
       min-height: 34px !important;
       place-items: center !important;
-      overflow: hidden !important;
+      overflow: visible !important;
       border: 1px solid color-mix(in srgb, #f59e0b 72%, var(--stem-border, rgba(255,255,255,0.18))) !important;
       border-radius: 999px !important;
       padding: 0 !important;
@@ -207,7 +207,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
     .stem-desktop-update-button::before {
       content: '' !important;
       position: absolute !important;
-      inset: -10px 3px 2px !important;
+      inset: -10px 3px -15px !important;
       pointer-events: none !important;
       background-image:
         radial-gradient(circle, rgba(255, 239, 184, 0.95) 0 1px, transparent 1.4px),
@@ -235,26 +235,12 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
     }
 
     .stem-desktop-update-button::after {
-      content: attr(data-stem-update-count) !important;
-      position: absolute !important;
-      top: -6px !important;
-      right: -6px !important;
+      content: none !important;
       display: none !important;
-      min-width: 18px !important;
-      height: 18px !important;
-      place-items: center !important;
-      border: 1px solid rgba(255, 255, 255, 0.72) !important;
-      border-radius: 999px !important;
-      color: #042f2e !important;
-      background: #99f6e4 !important;
-      font-size: 11px !important;
-      font-weight: 800 !important;
-      line-height: 1 !important;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25) !important;
     }
 
     .stem-desktop-update-button:not([data-stem-update-count='0'])::after {
-      display: grid !important;
+      display: none !important;
     }
 
     .stem-desktop-update-button[hidden] {
