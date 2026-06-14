@@ -191,6 +191,8 @@ const windowControls = document.querySelector<HTMLElement>('.window-controls')!;
 const WINDOW_CONTROLS_HIDE_DELAY_MS = 1000;
 const WINDOW_CONTROLS_REVEAL_WIDTH = 190;
 const WINDOW_CONTROLS_REVEAL_HEIGHT = 110;
+const STARTUP_UPDATE_FAILURE_KEY = 'stemred_startup_update_failure_v1';
+const STARTUP_UPDATE_FAILURE_SUPPRESS_MS = 30 * 60 * 1000;
 
 let latestBootstrap: BootstrapResult | null = null;
 let pendingDeepLinkUrl = '';
@@ -253,6 +255,89 @@ function setButtons(...visible: Array<'retry' | 'open' | 'update'>) {
   retryButton.hidden = !visible.includes('retry');
   openButton.hidden = !visible.includes('open');
   updateButton.hidden = !visible.includes('update');
+}
+
+function startupUpdateRecentlyFailed(version: string): boolean {
+  try {
+    const raw = localStorage.getItem(STARTUP_UPDATE_FAILURE_KEY);
+    if (!raw) return false;
+    const failure = JSON.parse(raw) as { version?: string; failedAt?: number };
+    return (
+      failure.version === version &&
+      typeof failure.failedAt === 'number' &&
+      Date.now() - failure.failedAt < STARTUP_UPDATE_FAILURE_SUPPRESS_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rememberStartupUpdateFailure(version: string) {
+  try {
+    localStorage.setItem(
+      STARTUP_UPDATE_FAILURE_KEY,
+      JSON.stringify({ version, failedAt: Date.now() }),
+    );
+  } catch {
+    // Не блокируем запуск из-за недоступного localStorage.
+  }
+}
+
+function clearStartupUpdateFailure() {
+  try {
+    localStorage.removeItem(STARTUP_UPDATE_FAILURE_KEY);
+  } catch {
+    // Не блокируем запуск из-за недоступного localStorage.
+  }
+}
+
+async function installStartupUpdateIfAvailable(result: BootstrapResult): Promise<boolean> {
+  if (!['ready', 'update_available', 'update_required'].includes(result.state)) return false;
+
+  titleEl.textContent = t('Проверяем обновления');
+  messageEl.textContent = t('Перед открытием приложения проверяем новую версию оболочки.');
+
+  let update: Awaited<ReturnType<typeof check>> | null = null;
+  try {
+    update = await check();
+  } catch (error) {
+    if (result.state !== 'update_required') return false;
+    titleEl.textContent = t('Не удалось обновить');
+    messageEl.textContent = error instanceof Error ? error.message : String(error || t('Не удалось обновить'));
+    setButtons('retry', 'update');
+    return true;
+  }
+
+  if (!update) return false;
+
+  const version = String(update.version || 'unknown');
+  if (startupUpdateRecentlyFailed(version)) return false;
+
+  titleEl.textContent = t('Загрузка обновления');
+  messageEl.textContent = t('Скачиваем и устанавливаем новую версию оболочки.');
+
+  try {
+    await update.downloadAndInstall((event) => {
+      if (event.event === 'Started') {
+        const contentLength = Number(event.data.contentLength || 0);
+        messageEl.textContent = contentLength > 0 ? downloadMbMessage(Math.round(contentLength / 1024 / 1024)) : t('Скачиваем обновление.');
+      } else if (event.event === 'Progress') {
+        messageEl.textContent = downloadedKbMessage(Math.round(event.data.chunkLength / 1024));
+      } else if (event.event === 'Finished') {
+        messageEl.textContent = t('Обновление установлено. Перезапускаем приложение.');
+      }
+    });
+
+    clearStartupUpdateFailure();
+    await relaunch();
+    return true;
+  } catch (error) {
+    rememberStartupUpdateFailure(version);
+    titleEl.textContent = t('Не удалось обновить');
+    messageEl.textContent = error instanceof Error ? error.message : String(error || t('Не удалось обновить'));
+    setButtons(result.state === 'update_required' ? 'retry' : 'open', 'retry', 'update');
+    return true;
+  }
 }
 
 function isPointerNearWindowControls() {
@@ -353,6 +438,10 @@ async function bootstrap() {
     latestBootstrap = result;
     detailsEl.textContent = describeBuild(result);
 
+    if (await installStartupUpdateIfAvailable(result)) {
+      return;
+    }
+
     if (result.state === 'ready') {
       titleEl.textContent = t('Открываем StemRed');
       messageEl.textContent = t('Сервер доступен. Сейчас откроется актуальная веб-версия.');
@@ -414,6 +503,7 @@ async function installUpdate() {
       }
     });
 
+    clearStartupUpdateFailure();
     await relaunch();
   } catch (error) {
     titleEl.textContent = t('Не удалось обновить');

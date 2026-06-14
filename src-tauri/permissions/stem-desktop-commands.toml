@@ -13,6 +13,7 @@ commands.allow = [
   "set_autostart_enabled",
   "get_microphone_access_enabled",
   "set_microphone_access_enabled",
+  "get_desktop_activity_snapshot",
   "minimize_desktop_window",
   "toggle_desktop_window_maximized",
   "close_desktop_window_to_tray",

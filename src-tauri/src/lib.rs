@@ -763,6 +763,12 @@ struct MicrophoneAccessChanged {
     enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct DesktopActivitySnapshot {
+    idle_seconds: u64,
+    active_app_category: Option<String>,
+}
+
 #[tauri::command]
 async fn bootstrap(app: AppHandle) -> Result<BootstrapResult, String> {
     let current_shell_version = app.package_info().version.to_string();
@@ -890,6 +896,11 @@ fn get_microphone_access_enabled(state: tauri::State<'_, DesktopState>) -> Resul
 #[tauri::command]
 fn set_microphone_access_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
     set_microphone_access(&app, enabled)
+}
+
+#[tauri::command]
+fn get_desktop_activity_snapshot() -> Result<DesktopActivitySnapshot, String> {
+    platform_activity::snapshot()
 }
 
 #[tauri::command]
@@ -1228,10 +1239,7 @@ fn resolve_stem_deep_link(raw: &str, default_remote_url: &str) -> Option<String>
 }
 
 fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
-    let args: Vec<String> = std::env::args().collect();
-    let initial_url = initial_remote_url(&args);
-
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(initial_url))
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("StemRed")
         .inner_size(1280.0, 820.0)
         .min_inner_size(390.0, 560.0)
@@ -1242,20 +1250,6 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
         .initialization_script("document.documentElement.classList.add('stem-desktop-frameless');")
         .on_navigation(|url| is_allowed_navigation_url(url))
         .build()
-}
-
-fn initial_remote_url(args: &[String]) -> Url {
-    let target = capture_argv_deep_link(args)
-        .and_then(|raw| resolve_stem_deep_link(&raw, DEFAULT_REMOTE_URL))
-        .unwrap_or_else(|| DEFAULT_REMOTE_URL.to_string());
-
-    let mut url = Url::parse(&target).unwrap_or_else(|_| {
-        Url::parse(DEFAULT_REMOTE_URL).expect("default remote URL must be valid")
-    });
-    url.query_pairs_mut()
-        .append_pair("_stem_desktop_shell", env!("CARGO_PKG_VERSION"))
-        .append_pair("_stem_desktop_start", &desktop_start_counter());
-    url
 }
 
 fn desktop_start_counter() -> String {
@@ -1457,6 +1451,150 @@ fn capture_argv_deep_link(args: &[String]) -> Option<String> {
 }
 
 #[cfg(windows)]
+mod platform_activity {
+    use std::mem::size_of;
+
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    use super::DesktopActivitySnapshot;
+
+    pub fn snapshot() -> Result<DesktopActivitySnapshot, String> {
+        Ok(DesktopActivitySnapshot {
+            idle_seconds: idle_seconds()?,
+            active_app_category: active_process_name().and_then(|name| category_for_process(&name)),
+        })
+    }
+
+    fn idle_seconds() -> Result<u64, String> {
+        let mut input = LASTINPUTINFO {
+            cbSize: size_of::<LASTINPUTINFO>() as u32,
+            dwTime: 0,
+        };
+
+        let ok = unsafe { GetLastInputInfo(&mut input) };
+        if ok == 0 {
+            return Err("last input state is unavailable".to_string());
+        }
+
+        let now = unsafe { GetTickCount64() };
+        Ok(now.saturating_sub(u64::from(input.dwTime)) / 1000)
+    }
+
+    fn active_process_name() -> Option<String> {
+        let hwnd = unsafe { GetForegroundWindow() };
+        if hwnd.is_null() {
+            return None;
+        }
+
+        let mut process_id = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut process_id) };
+        if process_id == 0 {
+            return None;
+        }
+
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if handle.is_null() {
+            return None;
+        }
+
+        let mut buffer = vec![0u16; 32_768];
+        let mut size = buffer.len() as u32;
+        let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size) };
+        unsafe { CloseHandle(handle) };
+
+        if ok == 0 || size == 0 {
+            return None;
+        }
+
+        let path = String::from_utf16_lossy(&buffer[..size as usize]);
+        path.rsplit(|ch| ch == '\\' || ch == '/')
+            .next()
+            .map(|name| name.to_ascii_lowercase())
+    }
+
+    fn category_for_process(process_name: &str) -> Option<String> {
+        if is_game_process(process_name) {
+            return Some("game".to_string());
+        }
+        if is_work_process(process_name) {
+            return Some("work".to_string());
+        }
+        None
+    }
+
+    fn is_game_process(name: &str) -> bool {
+        matches!(
+            name,
+            "steam.exe"
+                | "steamwebhelper.exe"
+                | "epicgameslauncher.exe"
+                | "battle.net.exe"
+                | "riotclientservices.exe"
+                | "leagueclientux.exe"
+                | "valorant.exe"
+                | "fortniteclient-win64-shipping.exe"
+                | "cs2.exe"
+                | "dota2.exe"
+                | "gta5.exe"
+                | "minecraft.exe"
+                | "minecraftlauncher.exe"
+                | "minecraft.windows.exe"
+                | "robloxplayerbeta.exe"
+                | "cyberpunk2077.exe"
+        )
+    }
+
+    fn is_work_process(name: &str) -> bool {
+        matches!(
+            name,
+            "code.exe"
+                | "cursor.exe"
+                | "devenv.exe"
+                | "rider64.exe"
+                | "idea64.exe"
+                | "pycharm64.exe"
+                | "webstorm64.exe"
+                | "phpstorm64.exe"
+                | "datagrip64.exe"
+                | "studio64.exe"
+                | "figma.exe"
+                | "winword.exe"
+                | "excel.exe"
+                | "powerpnt.exe"
+                | "onenote.exe"
+                | "outlook.exe"
+                | "teams.exe"
+                | "slack.exe"
+                | "zoom.exe"
+                | "notion.exe"
+                | "obsidian.exe"
+                | "postman.exe"
+                | "docker desktop.exe"
+        )
+    }
+}
+
+#[cfg(not(windows))]
+mod platform_activity {
+    use super::DesktopActivitySnapshot;
+
+    pub fn snapshot() -> Result<DesktopActivitySnapshot, String> {
+        Ok(DesktopActivitySnapshot {
+            idle_seconds: 0,
+            active_app_category: None,
+        })
+    }
+}
+
+#[cfg(windows)]
 mod platform_autostart {
     use std::io;
 
@@ -1615,6 +1753,7 @@ pub fn run() {
             set_autostart_enabled,
             get_microphone_access_enabled,
             set_microphone_access_enabled,
+            get_desktop_activity_snapshot,
             minimize_desktop_window,
             toggle_desktop_window_maximized,
             close_desktop_window_to_tray,
