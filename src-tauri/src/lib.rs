@@ -1554,7 +1554,10 @@ fn resolve_stem_deep_link(raw: &str, default_remote_url: &str) -> Option<String>
 }
 
 fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+    let args: Vec<String> = std::env::args().collect();
+    let initial_url = initial_remote_url(&args);
+
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(initial_url))
         .title("StemRed")
         .inner_size(1280.0, 820.0)
         .min_inner_size(390.0, 560.0)
@@ -1565,6 +1568,20 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
         .initialization_script("document.documentElement.classList.add('stem-desktop-frameless');")
         .on_navigation(|url| is_allowed_navigation_url(url))
         .build()
+}
+
+fn initial_remote_url(args: &[String]) -> Url {
+    let target = capture_argv_deep_link(args)
+        .and_then(|raw| resolve_stem_deep_link(&raw, DEFAULT_REMOTE_URL))
+        .unwrap_or_else(|| DEFAULT_REMOTE_URL.to_string());
+
+    let mut url = Url::parse(&target).unwrap_or_else(|_| {
+        Url::parse(DEFAULT_REMOTE_URL).expect("default remote URL must be valid")
+    });
+    url.query_pairs_mut()
+        .append_pair("_stem_desktop_shell", env!("CARGO_PKG_VERSION"))
+        .append_pair("_stem_desktop_start", &desktop_start_counter());
+    url
 }
 
 fn desktop_start_counter() -> String {
