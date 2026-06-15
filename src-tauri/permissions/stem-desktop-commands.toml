@@ -21,4 +21,7 @@ commands.allow = [
   "install_desktop_shell_update",
   "show_desktop_notification",
   "save_file_to_downloads_stem",
+  "pick_music_directory",
+  "scan_music_directory",
+  "read_music_file",
 ]

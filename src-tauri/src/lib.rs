@@ -11,6 +11,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -21,6 +22,9 @@ const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
 const REMOTE_HOST: &str = "chat-stem.ru";
 const AUTOSTART_REG_VALUE: &str = "StemRed";
 const DESKTOP_NOTIFICATION_RECENT_LIMIT: usize = 128;
+const DESKTOP_MUSIC_FOLDERS_FILE: &str = "music-folders.json";
+const DESKTOP_MUSIC_MAX_FILES: usize = 600;
+const DESKTOP_MUSIC_MAX_DEPTH: usize = 4;
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 (() => {
@@ -758,6 +762,41 @@ struct DesktopDownloadSaveResult {
     path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DesktopMusicDirectory {
+    id: String,
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DesktopMusicTrack {
+    id: String,
+    title: String,
+    filename: String,
+    path: String,
+    relative_path: String,
+    mime: String,
+    size: u64,
+    modified_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopMusicScanResult {
+    folder: DesktopMusicDirectory,
+    tracks: Vec<DesktopMusicTrack>,
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopMusicFile {
+    filename: String,
+    mime: String,
+    size: u64,
+    modified_ms: u64,
+    content_base64: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct MicrophoneAccessChanged {
     enabled: bool,
@@ -1040,6 +1079,282 @@ fn save_file_to_downloads_stem(
         directory: directory.to_string_lossy().to_string(),
         path: target.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command]
+fn pick_music_directory(app: AppHandle) -> Result<Option<DesktopMusicDirectory>, String> {
+    let Some(path) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = path
+        .into_path()
+        .map_err(|_| "Можно выбрать только локальную папку Windows".to_string())?;
+    let path = canonicalize_existing_dir(&path)?;
+    remember_music_directory(&app, &path)?;
+    Ok(Some(desktop_music_directory(&path)))
+}
+
+#[tauri::command]
+fn scan_music_directory(app: AppHandle, path: String) -> Result<DesktopMusicScanResult, String> {
+    let path = canonicalize_existing_dir(Path::new(path.trim()))?;
+    ensure_music_directory_allowed(&app, &path)?;
+
+    let mut tracks = Vec::new();
+    let mut truncated = false;
+    collect_desktop_music_tracks(&path, &path, 0, &mut tracks, &mut truncated)?;
+    tracks.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
+
+    Ok(DesktopMusicScanResult {
+        folder: desktop_music_directory(&path),
+        tracks,
+        truncated,
+    })
+}
+
+#[tauri::command]
+fn read_music_file(app: AppHandle, path: String) -> Result<DesktopMusicFile, String> {
+    let path = fs::canonicalize(Path::new(path.trim()))
+        .map_err(|error| format!("Музыкальный файл недоступен: {error}"))?;
+    ensure_music_file_allowed(&app, &path)?;
+    if !is_desktop_music_file(&path) {
+        return Err("Файл не является поддерживаемым аудио".to_string());
+    }
+
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("Не удалось прочитать музыкальный файл: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Это не файл".to_string());
+    }
+
+    let bytes =
+        fs::read(&path).map_err(|error| format!("Не удалось открыть музыкальный файл: {error}"))?;
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("music")
+        .to_string();
+
+    Ok(DesktopMusicFile {
+        filename,
+        mime: desktop_music_mime(&path).to_string(),
+        size: metadata.len(),
+        modified_ms: system_time_ms(metadata.modified().ok()),
+        content_base64: general_purpose::STANDARD.encode(bytes),
+    })
+}
+
+fn canonicalize_existing_dir(path: &Path) -> Result<PathBuf, String> {
+    let path =
+        fs::canonicalize(path).map_err(|error| format!("Локальная папка недоступна: {error}"))?;
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err("Выбранный путь не является папкой".to_string())
+    }
+}
+
+fn desktop_music_directory(path: &Path) -> DesktopMusicDirectory {
+    DesktopMusicDirectory {
+        id: desktop_music_directory_id(path),
+        name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Локальная музыка")
+            .to_string(),
+        path: path.to_string_lossy().to_string(),
+    }
+}
+
+fn desktop_music_directory_id(path: &Path) -> String {
+    format!(
+        "desktop-folder:{}",
+        stable_hash(path.to_string_lossy().as_bytes())
+    )
+}
+
+fn remember_music_directory(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let mut folders = read_remembered_music_directories(app);
+    let path_string = path.to_string_lossy().to_string();
+    if !folders.iter().any(|folder| folder.path == path_string) {
+        folders.push(desktop_music_directory(path));
+    }
+    write_remembered_music_directories(app, &folders)
+}
+
+fn read_remembered_music_directories(app: &AppHandle) -> Vec<DesktopMusicDirectory> {
+    let Ok(path) = music_directories_config_path(app) else {
+        return Vec::new();
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<DesktopMusicDirectory>>(&raw).unwrap_or_default()
+}
+
+fn write_remembered_music_directories(
+    app: &AppHandle,
+    folders: &[DesktopMusicDirectory],
+) -> Result<(), String> {
+    let path = music_directories_config_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Не удалось сохранить список папок: {error}"))?;
+    }
+    let raw = serde_json::to_string_pretty(folders)
+        .map_err(|error| format!("Не удалось сериализовать список папок: {error}"))?;
+    fs::write(path, raw).map_err(|error| format!("Не удалось записать список папок: {error}"))
+}
+
+fn music_directories_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Не удалось найти config-папку приложения: {error}"))?;
+    dir.push(DESKTOP_MUSIC_FOLDERS_FILE);
+    Ok(dir)
+}
+
+fn ensure_music_directory_allowed(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let allowed = read_remembered_music_directories(app)
+        .into_iter()
+        .filter_map(|folder| fs::canonicalize(folder.path).ok())
+        .any(|folder| path.starts_with(folder));
+
+    if allowed {
+        Ok(())
+    } else {
+        Err("Папка не была выбрана в Windows-приложении".to_string())
+    }
+}
+
+fn ensure_music_file_allowed(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let allowed = read_remembered_music_directories(app)
+        .into_iter()
+        .filter_map(|folder| fs::canonicalize(folder.path).ok())
+        .any(|folder| path.starts_with(folder));
+
+    if allowed {
+        Ok(())
+    } else {
+        Err("Файл находится вне выбранных музыкальных папок".to_string())
+    }
+}
+
+fn collect_desktop_music_tracks(
+    root: &Path,
+    directory: &Path,
+    depth: usize,
+    tracks: &mut Vec<DesktopMusicTrack>,
+    truncated: &mut bool,
+) -> Result<(), String> {
+    if depth > DESKTOP_MUSIC_MAX_DEPTH || tracks.len() >= DESKTOP_MUSIC_MAX_FILES {
+        *truncated = true;
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("Не удалось прочитать папку с музыкой: {error}"))?;
+    for entry in entries {
+        if tracks.len() >= DESKTOP_MUSIC_MAX_FILES {
+            *truncated = true;
+            break;
+        }
+
+        let entry = entry.map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("Не удалось прочитать metadata файла: {error}"))?;
+
+        if metadata.is_dir() {
+            collect_desktop_music_tracks(root, &path, depth + 1, tracks, truncated)?;
+            continue;
+        }
+
+        if !metadata.is_file() || !is_desktop_music_file(&path) {
+            continue;
+        }
+
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("music")
+            .to_string();
+        let relative_path = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let modified_ms = system_time_ms(metadata.modified().ok());
+
+        tracks.push(DesktopMusicTrack {
+            id: format!(
+                "desktop-track:{}:{}:{}",
+                stable_hash(path.to_string_lossy().as_bytes()),
+                metadata.len(),
+                modified_ms
+            ),
+            title: desktop_music_title(&filename),
+            filename,
+            path: path.to_string_lossy().to_string(),
+            relative_path,
+            mime: desktop_music_mime(&path).to_string(),
+            size: metadata.len(),
+            modified_ms,
+        });
+    }
+
+    Ok(())
+}
+
+fn is_desktop_music_file(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("aac" | "flac" | "m4a" | "mp3" | "ogg" | "opus" | "wav")
+    )
+}
+
+fn desktop_music_mime(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("aac") => "audio/aac",
+        Some("flac") => "audio/flac",
+        Some("m4a") => "audio/mp4",
+        Some("ogg" | "opus") => "audio/ogg",
+        Some("wav") => "audio/wav",
+        _ => "audio/mpeg",
+    }
+}
+
+fn desktop_music_title(filename: &str) -> String {
+    Path::new(filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.trim().is_empty())
+        .unwrap_or(filename)
+        .to_string()
+}
+
+fn system_time_ms(time: Option<SystemTime>) -> u64 {
+    time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn stable_hash(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn sanitize_download_filename(filename: &str) -> String {
@@ -1739,6 +2054,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -1760,7 +2076,10 @@ pub fn run() {
             check_desktop_shell_update,
             install_desktop_shell_update,
             show_desktop_notification,
-            save_file_to_downloads_stem
+            save_file_to_downloads_stem,
+            pick_music_directory,
+            scan_music_directory,
+            read_music_file
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {
