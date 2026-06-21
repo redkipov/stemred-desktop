@@ -29,6 +29,14 @@ npm run build
 
 `npm run check` runs TypeScript and Vite validation. `npm run build` creates the Windows installer through Tauri.
 
+For a production desktop update, bump the patch version during the build:
+
+```powershell
+npm run release:win
+```
+
+After that, commit the version files and update `deploy\.env.release` in the main repository so `DESKTOP_RECOMMENDED_SHELL_VERSION`, `DESKTOP_UPDATE_WINDOWS_X86_64_VERSION`, URL and signature all point to the same new version. Deploy refuses mismatched metadata.
+
 Generated folders and release artifacts are not part of the source release:
 
 - `node_modules/`

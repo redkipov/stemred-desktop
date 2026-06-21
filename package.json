@@ -15,6 +15,8 @@
     "build": "npm run build:win",
     "build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1",
     "build:store": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -MicrosoftStore",
+    "release:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -BumpPatch",
+    "release:store": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -MicrosoftStore -BumpPatch",
     "build:tauri": "tauri build",
     "build:web": "tsc --noEmit && vite build",
     "check": "tsc --noEmit && vite build && node ./scripts/check-music-runtime.mjs",

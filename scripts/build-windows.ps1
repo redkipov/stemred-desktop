@@ -1,5 +1,7 @@
 param(
-  [switch]$MicrosoftStore
+  [switch]$MicrosoftStore,
+  [switch]$BumpPatch,
+  [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,6 +42,133 @@ function Get-DesktopVersion {
   $configPath = Join-Path $PSScriptRoot "..\src-tauri\tauri.conf.json"
   $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
   return $config.version
+}
+
+function Assert-DesktopVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Version
+  )
+
+  if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Desktop version must be production semver X.Y.Z: $Version"
+  }
+}
+
+function Get-CargoPackageVersion {
+  $cargoPath = Join-Path $PSScriptRoot "..\src-tauri\Cargo.toml"
+  $inPackage = $false
+  foreach ($line in Get-Content -Path $cargoPath) {
+    $trimmed = $line.Trim()
+    if ($trimmed -eq "[package]") {
+      $inPackage = $true
+      continue
+    }
+    if ($inPackage -and $trimmed.StartsWith("[")) {
+      break
+    }
+    if ($inPackage -and $trimmed -match '^version\s*=\s*"([^"]+)"\s*$') {
+      return $Matches[1]
+    }
+  }
+
+  throw "Cargo package version was not found."
+}
+
+function Assert-DesktopVersionFilesAligned {
+  $packagePath = Join-Path $PSScriptRoot "..\package.json"
+  $package = Get-Content -Raw -Path $packagePath | ConvertFrom-Json
+  $versions = [ordered]@{
+    "package.json" = [string]$package.version
+    "src-tauri\tauri.conf.json" = [string](Get-DesktopVersion)
+    "src-tauri\Cargo.toml" = [string](Get-CargoPackageVersion)
+  }
+
+  $unique = @($versions.Values | Select-Object -Unique)
+  if ($unique.Count -ne 1) {
+    $details = ($versions.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" }) -join "; "
+    throw "Desktop versions are not aligned: $details"
+  }
+
+  Assert-DesktopVersion -Version $unique[0]
+}
+
+function Get-NextPatchVersion {
+  $current = Get-DesktopVersion
+  Assert-DesktopVersion -Version $current
+  $parts = $current.Split(".")
+  return "{0}.{1}.{2}" -f $parts[0], $parts[1], ([int]$parts[2] + 1)
+}
+
+function Set-CargoPackageVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Version
+  )
+
+  $cargoPath = Join-Path $PSScriptRoot "..\src-tauri\Cargo.toml"
+  $lines = Get-Content -Path $cargoPath
+  $inPackage = $false
+  $updated = $false
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $trimmed = $lines[$i].Trim()
+    if ($trimmed -eq "[package]") {
+      $inPackage = $true
+      continue
+    }
+    if ($inPackage -and $trimmed.StartsWith("[")) {
+      break
+    }
+    if ($inPackage -and $trimmed -match '^version\s*=') {
+      $lines[$i] = 'version = "{0}"' -f $Version
+      $updated = $true
+      break
+    }
+  }
+
+  if (-not $updated) {
+    throw "Cargo package version was not found."
+  }
+
+  Set-Content -Path $cargoPath -Value $lines -Encoding UTF8
+}
+
+function Set-TauriVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Version
+  )
+
+  $configPath = Join-Path $PSScriptRoot "..\src-tauri\tauri.conf.json"
+  $content = Get-Content -Raw -Path $configPath
+  $updated = [regex]::Replace($content, '("version"\s*:\s*)"[^"]+"', ('$1"{0}"' -f $Version), 1)
+  if ($updated -eq $content) {
+    throw "Tauri config version was not found."
+  }
+  Set-Content -Path $configPath -Value $updated -Encoding UTF8
+}
+
+function Set-DesktopVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Version
+  )
+
+  Assert-DesktopVersion -Version $Version
+
+  Push-Location (Join-Path $PSScriptRoot "..")
+  try {
+    & npm version $Version --no-git-tag-version --allow-same-version
+    if ($LASTEXITCODE -ne 0) {
+      throw "npm version exited with code $LASTEXITCODE"
+    }
+  } finally {
+    Pop-Location
+  }
+
+  Set-TauriVersion -Version $Version
+  Set-CargoPackageVersion -Version $Version
+  Assert-DesktopVersionFilesAligned
 }
 
 function Assert-PublicInstallerSignature {
@@ -134,6 +263,21 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY -and -not $env:TAURI_SIGNING_PRIVATE_KEY
   $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 }
 
+if ($BumpPatch -and $Version) {
+  throw "Use either -BumpPatch or -Version, not both."
+}
+
+if ($BumpPatch) {
+  $Version = Get-NextPatchVersion
+}
+
+if ($Version) {
+  Set-DesktopVersion -Version $Version
+  Write-Host "Desktop version set to $Version"
+} else {
+  Assert-DesktopVersionFilesAligned
+}
+
 $artifactDlib = if ($env:STEM_CODESIGN_ARTIFACT_DLIB) { $env:STEM_CODESIGN_ARTIFACT_DLIB } else { $env:STEM_CODESIGN_AZURE_DLIB }
 $artifactMetadata = if ($env:STEM_CODESIGN_ARTIFACT_METADATA) { $env:STEM_CODESIGN_ARTIFACT_METADATA } else { $env:STEM_CODESIGN_AZURE_METADATA }
 $hasArtifactSigningConfig = $artifactDlib -and $artifactMetadata
@@ -151,9 +295,10 @@ if (-not $hasSigningConfig) {
 }
 
 $signConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stem-tauri-sign-{0}.json" -f ([System.Guid]::NewGuid().ToString("N")))
+$hasUpdaterSigningConfig = $env:TAURI_SIGNING_PRIVATE_KEY -or $env:TAURI_SIGNING_PRIVATE_KEY_PATH
 $signConfig = @{
   bundle = @{
-    createUpdaterArtifacts = $false
+    createUpdaterArtifacts = [bool]$hasUpdaterSigningConfig
   }
 }
 
@@ -199,7 +344,7 @@ try {
   if ($MicrosoftStore) {
     Assert-PublicInstallerSignature -Installer $installer
   }
-  if (-not $MicrosoftStore) {
+  if (-not $MicrosoftStore -and -not (Test-Path "$($installer.FullName).sig")) {
     Sign-UpdaterArtifact -Installer $installer
   }
   Publish-ReleaseInstaller -Installer $installer -MicrosoftStore:$MicrosoftStore
