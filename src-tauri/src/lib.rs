@@ -303,13 +303,13 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 
     .stem-native-window-drag-zone--top {
       top: 0 !important;
-      right: 170px !important;
+      right: 0 !important;
       left: 0 !important;
-      height: 22px !important;
+      height: 37px !important;
     }
 
     .stem-native-window-drag-zone--left {
-      top: 22px !important;
+      top: 37px !important;
       bottom: 10px !important;
       left: 0 !important;
       width: 10px !important;
