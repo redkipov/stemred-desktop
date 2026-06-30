@@ -1,4 +1,6 @@
-use std::fs;
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -705,6 +707,7 @@ struct DesktopState {
     unread_count: Mutex<u32>,
     microphone_access_enabled: Mutex<bool>,
     recent_notifications: Mutex<Vec<(String, u128)>>,
+    pending_downloads: Mutex<HashMap<String, DesktopPendingDownload>>,
 }
 
 impl Default for DesktopState {
@@ -714,6 +717,7 @@ impl Default for DesktopState {
             unread_count: Mutex::new(0),
             microphone_access_enabled: Mutex::new(true),
             recent_notifications: Mutex::new(Vec::new()),
+            pending_downloads: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -760,6 +764,21 @@ struct DesktopDownloadSaveResult {
     filename: String,
     directory: String,
     path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopDownloadBeginResult {
+    transfer_id: String,
+    filename: String,
+    directory: String,
+    path: String,
+}
+
+#[derive(Debug, Clone)]
+struct DesktopPendingDownload {
+    filename: String,
+    directory: PathBuf,
+    path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1058,27 +1077,175 @@ fn save_file_to_downloads_stem(
         return Err("Файл пустой".to_string());
     }
 
-    let mut directory = app
-        .path()
-        .download_dir()
-        .map_err(|error| format!("Не удалось найти папку загрузок Windows: {error}"))?;
-    directory.push("Stem");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("Не удалось создать папку Stem: {error}"))?;
-
+    let directory = stemred_download_directory(&app)?;
     let safe_filename = sanitize_download_filename(&filename);
     let target = unique_download_path(&directory, &safe_filename);
     fs::write(&target, bytes).map_err(|error| format!("Не удалось сохранить файл: {error}"))?;
 
-    Ok(DesktopDownloadSaveResult {
-        filename: target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(&safe_filename)
-            .to_string(),
-        directory: directory.to_string_lossy().to_string(),
-        path: target.to_string_lossy().to_string(),
+    Ok(desktop_download_result(&directory, &target, &safe_filename))
+}
+
+#[tauri::command]
+fn begin_file_save_to_downloads_stemred(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    filename: String,
+) -> Result<DesktopDownloadBeginResult, String> {
+    let directory = stemred_download_directory(&app)?;
+    let safe_filename = sanitize_download_filename(&filename);
+    let target = unique_download_path(&directory, &safe_filename);
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|error| format!("Не удалось создать файл: {error}"))?;
+
+    let transfer_id = format!(
+        "{}-{}",
+        system_time_ms(Some(SystemTime::now())),
+        stable_hash(target.to_string_lossy().as_bytes())
+    );
+    let result = desktop_download_result(&directory, &target, &safe_filename);
+    let pending = DesktopPendingDownload {
+        filename: result.filename.clone(),
+        directory,
+        path: target,
+    };
+    state
+        .pending_downloads
+        .lock()
+        .map_err(|_| "Не удалось подготовить сохранение файла".to_string())?
+        .insert(transfer_id.clone(), pending);
+
+    Ok(DesktopDownloadBeginResult {
+        transfer_id,
+        filename: result.filename,
+        directory: result.directory,
+        path: result.path,
     })
+}
+
+#[tauri::command]
+fn write_file_save_chunk_to_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+    chunk_base64: String,
+) -> Result<(), String> {
+    let transfer_id = transfer_id.trim();
+    if transfer_id.is_empty() {
+        return Err("Не найден идентификатор сохранения".to_string());
+    }
+    let path = state
+        .pending_downloads
+        .lock()
+        .map_err(|_| "Не удалось продолжить сохранение файла".to_string())?
+        .get(transfer_id)
+        .map(|pending| pending.path.clone())
+        .ok_or_else(|| "Сохранение файла уже не активно".to_string())?;
+
+    let bytes = general_purpose::STANDARD
+        .decode(chunk_base64.trim())
+        .map_err(|error| format!("Не удалось прочитать часть файла: {error}"))?;
+    if bytes.is_empty() {
+        return Ok(());
+    }
+
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("Не удалось открыть файл для записи: {error}"))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("Не удалось записать часть файла: {error}"))
+}
+
+#[tauri::command]
+fn finish_file_save_to_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+) -> Result<DesktopDownloadSaveResult, String> {
+    let transfer_id = transfer_id.trim();
+    if transfer_id.is_empty() {
+        return Err("Не найден идентификатор сохранения".to_string());
+    }
+    let pending = state
+        .pending_downloads
+        .lock()
+        .map_err(|_| "Не удалось завершить сохранение файла".to_string())?
+        .remove(transfer_id)
+        .ok_or_else(|| "Сохранение файла уже не активно".to_string())?;
+
+    let size = fs::metadata(&pending.path)
+        .map_err(|error| format!("Не удалось проверить сохранённый файл: {error}"))?
+        .len();
+    if size == 0 {
+        let _ = fs::remove_file(&pending.path);
+        return Err("Файл пустой".to_string());
+    }
+
+    Ok(desktop_download_result(
+        &pending.directory,
+        &pending.path,
+        &pending.filename,
+    ))
+}
+
+#[tauri::command]
+fn cancel_file_save_to_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    let transfer_id = transfer_id.trim();
+    if transfer_id.is_empty() {
+        return Ok(());
+    }
+    let pending = state
+        .pending_downloads
+        .lock()
+        .map_err(|_| "Не удалось отменить сохранение файла".to_string())?
+        .remove(transfer_id);
+    if let Some(pending) = pending {
+        let _ = fs::remove_file(pending.path);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn find_file_in_downloads_stemred(
+    app: AppHandle,
+    filename: String,
+    size: u64,
+) -> Result<Option<DesktopDownloadSaveResult>, String> {
+    if size == 0 {
+        return Ok(None);
+    }
+
+    let directory = stemred_download_directory(&app)?;
+    let safe_filename = sanitize_download_filename(&filename);
+    let target = directory.join(&safe_filename);
+    let metadata = match fs::metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Не удалось проверить файл: {error}")),
+    };
+    if !metadata.is_file() || metadata.len() != size {
+        return Ok(None);
+    }
+
+    Ok(Some(desktop_download_result(
+        &directory,
+        &target,
+        &safe_filename,
+    )))
+}
+
+#[tauri::command]
+fn desktop_path_exists(path: String) -> bool {
+    let value = path.trim();
+    if value.is_empty() {
+        return false;
+    }
+
+    Path::new(value).exists()
 }
 
 #[tauri::command]
@@ -1355,6 +1522,33 @@ fn stable_hash(bytes: &[u8]) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
+}
+
+fn stemred_download_directory(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut directory = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("Не удалось найти папку загрузок Windows: {error}"))?;
+    directory.push("StemRed");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Не удалось создать папку StemRed: {error}"))?;
+    Ok(directory)
+}
+
+fn desktop_download_result(
+    directory: &Path,
+    target: &Path,
+    fallback_filename: &str,
+) -> DesktopDownloadSaveResult {
+    DesktopDownloadSaveResult {
+        filename: target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(fallback_filename)
+            .to_string(),
+        directory: directory.to_string_lossy().to_string(),
+        path: target.to_string_lossy().to_string(),
+    }
 }
 
 fn sanitize_download_filename(filename: &str) -> String {
@@ -2094,6 +2288,12 @@ pub fn run() {
             install_desktop_shell_update,
             show_desktop_notification,
             save_file_to_downloads_stem,
+            begin_file_save_to_downloads_stemred,
+            write_file_save_chunk_to_downloads_stemred,
+            finish_file_save_to_downloads_stemred,
+            cancel_file_save_to_downloads_stemred,
+            find_file_in_downloads_stemred,
+            desktop_path_exists,
             pick_music_directory,
             scan_music_directory,
             read_music_file
