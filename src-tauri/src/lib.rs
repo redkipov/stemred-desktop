@@ -1249,6 +1249,30 @@ fn desktop_path_exists(path: String) -> bool {
 }
 
 #[tauri::command]
+fn open_downloaded_file(app: AppHandle, path: String) -> Result<(), String> {
+    let value = path.trim();
+    if value.is_empty() {
+        return Err("Не указан путь к файлу".to_string());
+    }
+
+    let target = fs::canonicalize(Path::new(value))
+        .map_err(|error| format!("Файл недоступен: {error}"))?;
+    if !target.is_file() {
+        return Err("Можно открыть только файл".to_string());
+    }
+
+    let directory = fs::canonicalize(stemred_download_directory(&app)?)
+        .map_err(|error| format!("Папка загрузок недоступна: {error}"))?;
+    if !target.starts_with(&directory) {
+        return Err("Файл находится вне папки загрузок StemRed".to_string());
+    }
+
+    app.opener()
+        .open_path(target.to_string_lossy().to_string(), None::<String>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn pick_music_directory(app: AppHandle) -> Result<Option<DesktopMusicDirectory>, String> {
     let Some(path) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
@@ -2294,6 +2318,7 @@ pub fn run() {
             cancel_file_save_to_downloads_stemred,
             find_file_in_downloads_stemred,
             desktop_path_exists,
+            open_downloaded_file,
             pick_music_directory,
             scan_music_directory,
             read_music_file

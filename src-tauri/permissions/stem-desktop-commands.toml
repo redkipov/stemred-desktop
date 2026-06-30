@@ -27,6 +27,7 @@ commands.allow = [
   "cancel_file_save_to_downloads_stemred",
   "find_file_in_downloads_stemred",
   "desktop_path_exists",
+  "open_downloaded_file",
   "pick_music_directory",
   "scan_music_directory",
   "read_music_file",
