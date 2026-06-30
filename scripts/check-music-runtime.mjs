@@ -25,6 +25,15 @@ const requiredCommands = [
   'read_music_file',
 ];
 
+const requiredFileTransferCommands = [
+  'begin_file_save_to_downloads_stemred',
+  'write_file_save_chunk_to_downloads_stemred',
+  'finish_file_save_to_downloads_stemred',
+  'cancel_file_save_to_downloads_stemred',
+  'find_file_in_downloads_stemred',
+  'desktop_path_exists',
+];
+
 const checks = [
   ['Cargo.toml', files.cargo, 'tauri-plugin-dialog'],
   ['lib.rs', files.lib, 'use tauri_plugin_dialog::DialogExt;'],
@@ -37,6 +46,21 @@ const checks = [
   ...requiredCommands.map((command) => ['invoke handler', files.lib, command]),
   ...requiredCommands.map((command) => ['permissions', files.permissions, command]),
   ...requiredCommands.map((command) => ['ACL schema', files.aclSchema, command]),
+  ...requiredFileTransferCommands.map((command) => [
+    'lib.rs',
+    files.lib,
+    `fn ${command}`,
+  ]),
+  ...requiredFileTransferCommands.map((command) => [
+    'invoke handler',
+    files.lib,
+    command,
+  ]),
+  ...requiredFileTransferCommands.map((command) => [
+    'permissions',
+    files.permissions,
+    command,
+  ]),
 ];
 
 const missing = checks.filter(([, content, token]) => !content.includes(token));
@@ -48,4 +72,4 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-console.log('Music runtime parity check passed');
+console.log('Desktop runtime parity check passed');
