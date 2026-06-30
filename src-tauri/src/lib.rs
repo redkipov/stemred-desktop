@@ -305,11 +305,11 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
       top: 0 !important;
       right: 0 !important;
       left: 0 !important;
-      height: 37px !important;
+      height: 32px !important;
     }
 
     .stem-native-window-drag-zone--left {
-      top: 37px !important;
+      top: 32px !important;
       bottom: 10px !important;
       left: 0 !important;
       width: 10px !important;
