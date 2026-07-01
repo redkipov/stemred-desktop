@@ -1718,6 +1718,7 @@ fn is_allowed_url(value: &str) -> bool {
 fn is_allowed_navigation_url(url: &Url) -> bool {
     match url.scheme() {
         "https" | "wss" => url.host_str() == Some(REMOTE_HOST),
+        "http" if url.host_str() == Some("tauri.localhost") => true,
         "http" | "ws" if cfg!(debug_assertions) => {
             matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"))
                 && matches!(url.port(), Some(3010 | 4000 | 1420))
