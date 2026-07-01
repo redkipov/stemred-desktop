@@ -2,7 +2,7 @@
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #edf7f7;
-  background: #061014;
+  background: #05080b;
 }
 
 * {
@@ -16,9 +16,25 @@ body {
   margin: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at 18% 12%, rgba(42, 191, 171, 0.24), transparent 28rem),
-    radial-gradient(circle at 82% 20%, rgba(230, 71, 130, 0.18), transparent 24rem),
-    linear-gradient(145deg, #071215 0%, #10141c 52%, #06080d 100%);
+    linear-gradient(120deg, rgba(19, 168, 151, 0.18), transparent 36%),
+    linear-gradient(245deg, rgba(226, 70, 133, 0.16), transparent 42%),
+    #05080b;
+}
+
+body::before {
+  position: fixed;
+  inset: -35%;
+  content: "";
+  background:
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 255, 255, 0.035) 0,
+      rgba(255, 255, 255, 0.035) 1px,
+      transparent 1px,
+      transparent 18px
+    );
+  animation: backgroundFlow 18s linear infinite;
+  pointer-events: none;
 }
 
 button {
@@ -62,13 +78,6 @@ button:disabled {
 
 .titlebar__brand {
   display: none;
-  position: absolute;
-  z-index: 1;
-  left: 14px;
-  color: #9fb9bd;
-  font-size: 12px;
-  font-weight: 750;
-  pointer-events: none;
 }
 
 .window-controls {
@@ -121,6 +130,7 @@ button:disabled {
 }
 
 .shell {
+  position: relative;
   display: grid;
   height: 100vh;
   overflow: hidden;
@@ -128,49 +138,79 @@ button:disabled {
   padding: 32px;
 }
 
-.panel {
-  width: min(520px, 100%);
-  border: 1px solid rgba(174, 230, 225, 0.18);
-  border-radius: 12px;
-  padding: 32px;
-  background: rgba(7, 16, 20, 0.82);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
-  backdrop-filter: blur(18px);
+.loader {
+  position: relative;
+  display: grid;
+  width: min(820px, 100%);
+  min-height: 360px;
+  place-items: center;
+  text-align: center;
 }
 
-.mark {
-  display: block;
-  width: 56px;
-  height: 56px;
+.brand-logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: clamp(210px, 30vw, 360px);
+  height: clamp(210px, 30vw, 360px);
   object-fit: contain;
+  opacity: 0.34;
+  filter:
+    drop-shadow(0 0 30px rgba(24, 185, 167, 0.26))
+    drop-shadow(0 0 62px rgba(226, 70, 133, 0.16));
+  animation: logoPulse 2.6s ease-in-out infinite;
+  transform: translate(-50%, -50%);
 }
 
-.eyebrow {
-  margin: 22px 0 8px;
-  color: #70d7cd;
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-h1 {
+.brand-title {
+  position: relative;
+  z-index: 2;
   margin: 0;
-  font-size: 28px;
-  line-height: 1.15;
+  color: #f6ffff;
+  font-size: clamp(58px, 12vw, 150px);
+  font-weight: 900;
+  line-height: 0.92;
   letter-spacing: 0;
+  text-shadow:
+    0 0 24px rgba(112, 215, 205, 0.38),
+    0 0 52px rgba(226, 70, 133, 0.18);
 }
 
-#message {
-  margin: 14px 0 0;
+.brand-title::after {
+  position: absolute;
+  right: 4%;
+  bottom: -28px;
+  left: 4%;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #18b9a7, #e24685, transparent);
+  content: "";
+  animation: underlineFlow 1.9s ease-in-out infinite;
+}
+
+.loading-word {
+  position: relative;
+  z-index: 2;
+  min-height: 24px;
+  margin: 82px 0 0;
   color: #b9caca;
-  line-height: 1.55;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  transition: opacity 180ms ease;
+}
+
+.loading-word--changing {
+  opacity: 0;
 }
 
 .progress {
   position: relative;
-  height: 4px;
-  margin-top: 24px;
+  z-index: 2;
+  width: min(360px, 56vw);
+  height: 5px;
+  margin-top: 18px;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
@@ -179,32 +219,73 @@ h1 {
 .progress span {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 38%;
+  width: 42%;
   border-radius: inherit;
   background: linear-gradient(90deg, #18b9a7, #e24685);
-  animation: slide 1.2s ease-in-out infinite alternate;
+  animation: progressSlide 1.15s ease-in-out infinite alternate;
 }
 
 .actions {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 24px;
+  justify-content: center;
+  margin-top: 22px;
 }
 
 .details {
+  position: relative;
+  z-index: 2;
   min-height: 20px;
-  margin: 18px 0 0;
+  margin: 14px 0 0;
   color: #7f9498;
   font-size: 12px;
   line-height: 1.45;
 }
 
-@keyframes slide {
+@keyframes backgroundFlow {
   from {
-    transform: translateX(-20%);
+    transform: translate3d(-4%, -2%, 0);
   }
   to {
-    transform: translateX(180%);
+    transform: translate3d(4%, 2%, 0);
+  }
+}
+
+@keyframes logoPulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+  50% {
+    opacity: 0.42;
+    transform: translate(-50%, -52%) scale(1.03);
+  }
+}
+
+@keyframes underlineFlow {
+  0% {
+    opacity: 0.45;
+    transform: scaleX(0.52);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0.45;
+    transform: scaleX(0.52);
+  }
+}
+
+@keyframes progressSlide {
+  from {
+    transform: translateX(-24%);
+  }
+  to {
+    transform: translateX(172%);
   }
 }

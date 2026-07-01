@@ -6,6 +6,8 @@ import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check } from '@tauri-apps/plugin-updater';
 
+declare const __APP_VERSION__: string;
+
 type BootstrapState = 'ready' | 'update_available' | 'update_required' | 'offline';
 
 type BootstrapResult = {
@@ -200,6 +202,18 @@ const WINDOW_CONTROLS_REVEAL_HEIGHT = 110;
 const STARTUP_UPDATE_FAILURE_KEY = 'stemred_startup_update_failure_v1';
 const STARTUP_UPDATE_FAILURE_SUPPRESS_MS = 30 * 60 * 1000;
 const FALLBACK_REMOTE_URL = 'https://chat-stem.ru/messages';
+const SHELL_APP_VERSION = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : 'unknown';
+const LOADING_WORDS = [
+  'Загрузка',
+  'Loading',
+  'Cargando',
+  'Chargement',
+  'Wird geladen',
+  'Caricamento',
+  'Yukleniyor',
+  'تحميل',
+  '加载中',
+];
 
 let latestBootstrap: BootstrapResult | null = null;
 let pendingDeepLinkUrl = '';
@@ -208,6 +222,7 @@ let windowControlsHideTimer = 0;
 let lastPointerX = Number.NaN;
 let lastPointerY = Number.NaN;
 let shellLocale = detectShellLocale();
+let loadingWordIndex = 0;
 
 function detectShellLocale(): ShellLocale {
   const candidates = [...(navigator.languages || []), navigator.language].filter(Boolean);
@@ -226,13 +241,34 @@ function t(source: string): string {
 function applyShellLanguage() {
   document.documentElement.lang = SHELL_INTL_LOCALES[shellLocale];
   document.documentElement.dir = shellLocale === 'ar' ? 'rtl' : 'ltr';
-  document.querySelector('.eyebrow')!.textContent = t('Оболочка StemRed');
   retryButton.textContent = t('Повторить');
   openButton.textContent = t('Открыть приложение');
   updateButton.textContent = t('Обновить');
   minimizeButton.setAttribute('aria-label', t('Свернуть'));
   maximizeButton.setAttribute('aria-label', t('Развернуть'));
   closeButton.setAttribute('aria-label', t('Скрыть в трей'));
+}
+
+function shellVersionText(version = SHELL_APP_VERSION): string {
+  return `v${version || 'unknown'}`;
+}
+
+function setShellVersion(version = SHELL_APP_VERSION) {
+  detailsEl.textContent = shellVersionText(version);
+}
+
+function rotateLoadingWord() {
+  messageEl.classList.add('loading-word--changing');
+  window.setTimeout(() => {
+    loadingWordIndex = (loadingWordIndex + 1) % LOADING_WORDS.length;
+    messageEl.textContent = LOADING_WORDS[loadingWordIndex];
+    messageEl.classList.remove('loading-word--changing');
+  }, 180);
+}
+
+function installLoadingWordRotation() {
+  messageEl.textContent = LOADING_WORDS[loadingWordIndex];
+  window.setInterval(rotateLoadingWord, 1400);
 }
 
 function downloadMbMessage(megabytes: number): string {
@@ -300,17 +336,14 @@ function clearStartupUpdateFailure() {
 
 async function installStartupUpdateIfAvailable(result: BootstrapResult): Promise<boolean> {
   if (!['ready', 'update_available', 'update_required'].includes(result.state)) return false;
-
-  titleEl.textContent = t('Проверяем обновления');
-  messageEl.textContent = t('Перед открытием приложения проверяем новую версию оболочки.');
+  titleEl.textContent = 'StemRED';
+  setShellVersion(result.current_shell_version);
 
   let update: Awaited<ReturnType<typeof check>> | null = null;
   try {
     update = await check();
   } catch (error) {
     if (result.state !== 'update_required') return false;
-    titleEl.textContent = t('Не удалось обновить');
-    messageEl.textContent = error instanceof Error ? error.message : String(error || t('Не удалось обновить'));
     setButtons('retry', 'update');
     return true;
   }
@@ -319,19 +352,16 @@ async function installStartupUpdateIfAvailable(result: BootstrapResult): Promise
 
   const version = String(update.version || 'unknown');
   if (startupUpdateRecentlyFailed(version)) return false;
-
-  titleEl.textContent = t('Загрузка обновления');
-  messageEl.textContent = t('Скачиваем и устанавливаем новую версию оболочки.');
+  setShellVersion(result.current_shell_version);
 
   try {
     await update.downloadAndInstall((event) => {
       if (event.event === 'Started') {
-        const contentLength = Number(event.data.contentLength || 0);
-        messageEl.textContent = contentLength > 0 ? downloadMbMessage(Math.round(contentLength / 1024 / 1024)) : t('Скачиваем обновление.');
+        setShellVersion(result.current_shell_version);
       } else if (event.event === 'Progress') {
-        messageEl.textContent = downloadedKbMessage(Math.round(event.data.chunkLength / 1024));
+        setShellVersion(result.current_shell_version);
       } else if (event.event === 'Finished') {
-        messageEl.textContent = t('Обновление установлено. Перезапускаем приложение.');
+        setShellVersion(result.current_shell_version);
       }
     });
 
@@ -340,8 +370,6 @@ async function installStartupUpdateIfAvailable(result: BootstrapResult): Promise
     return true;
   } catch (error) {
     rememberStartupUpdateFailure(version);
-    titleEl.textContent = t('Не удалось обновить');
-    messageEl.textContent = error instanceof Error ? error.message : String(error || t('Не удалось обновить'));
     setButtons(result.state === 'update_required' ? 'retry' : 'open', 'retry', 'update');
     return true;
   }
@@ -390,13 +418,7 @@ function installWindowControlsAutoReveal() {
 }
 
 function describeBuild(result: BootstrapResult): string {
-  return [
-    `${shellLocale === 'ru' ? 'Оболочка' : shellLocale === 'es' ? 'Shell' : shellLocale === 'ar' ? 'الغلاف' : shellLocale === 'fr' ? 'Enveloppe' : 'Shell'} ${result.current_shell_version}`,
-    `${shellLocale === 'ru' ? 'минимум' : shellLocale === 'es' ? 'mínimo' : shellLocale === 'ar' ? 'الحد الأدنى' : shellLocale === 'fr' ? 'minimum' : 'minimum'} ${result.min_shell_version}`,
-    `${shellLocale === 'ru' ? 'рекомендовано' : shellLocale === 'es' ? 'recomendado' : shellLocale === 'ar' ? 'موصى به' : shellLocale === 'fr' ? 'recommandé' : 'recommended'} ${result.recommended_shell_version}`,
-    `web ${result.web_build_id}`,
-    `api ${result.api_build_id}`,
-  ].join(' · ');
+  return shellVersionText(result.current_shell_version);
 }
 
 async function resolveInitialDeepLink() {
@@ -440,9 +462,8 @@ function navigateToRemoteUrl(url: string) {
 async function bootstrap() {
   setBusy(true);
   setButtons();
-  titleEl.textContent = t('Подключение к StemRed');
-  messageEl.textContent = t('Проверяем конфигурацию сервера и версию оболочки.');
-  detailsEl.textContent = '';
+  titleEl.textContent = 'StemRED';
+  setShellVersion();
 
   try {
     const result = await invoke<BootstrapResult>('bootstrap');
@@ -454,34 +475,24 @@ async function bootstrap() {
     }
 
     if (result.state === 'ready') {
-      titleEl.textContent = t('Открываем StemRed');
-      messageEl.textContent = t('Сервер доступен. Сейчас откроется актуальная веб-версия.');
       await navigateToRemote(result);
       return;
     }
 
     if (result.state === 'update_available') {
-      titleEl.textContent = t('Доступно обновление');
-      messageEl.textContent = t('Можно продолжить работу сейчас или установить новую версию оболочки.');
-      setButtons('open', 'update', 'retry');
+      await navigateToRemote(result);
       return;
     }
 
     if (result.state === 'update_required') {
-      titleEl.textContent = t('Требуется обновление');
-      messageEl.textContent = t('Эта версия оболочки устарела и должна быть обновлена перед запуском.');
       setButtons('update', 'retry');
       return;
     }
 
-    titleEl.textContent = t('Открываем StemRed');
-    messageEl.textContent = t('Сервер недоступен. Открываем сохранённые данные.');
     await navigateToRemote(result);
   } catch (error) {
     latestBootstrap = null;
-    titleEl.textContent = t('Открываем StemRed');
-    messageEl.textContent = t('Сервер недоступен. Открываем сохранённые данные.');
-    detailsEl.textContent = error instanceof Error ? error.message : String(error || '');
+    setShellVersion();
     navigateToRemoteUrl(FALLBACK_REMOTE_URL);
   } finally {
     setBusy(false);
@@ -491,34 +502,29 @@ async function bootstrap() {
 async function installUpdate() {
   setBusy(true);
   setButtons();
-  titleEl.textContent = t('Загрузка обновления');
-  messageEl.textContent = t('Скачиваем и устанавливаем новую версию оболочки.');
+  titleEl.textContent = 'StemRED';
+  setShellVersion(latestBootstrap?.current_shell_version || SHELL_APP_VERSION);
 
   try {
     const update = await check();
     if (!update) {
-      titleEl.textContent = t('Обновление не найдено');
-      messageEl.textContent = t('Сервер обновлений не вернул новую версию для этой платформы.');
       setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry');
       return;
     }
 
     await update.downloadAndInstall((event) => {
       if (event.event === 'Started') {
-        const contentLength = Number(event.data.contentLength || 0);
-        messageEl.textContent = contentLength > 0 ? downloadMbMessage(Math.round(contentLength / 1024 / 1024)) : t('Скачиваем обновление.');
+        setShellVersion(SHELL_APP_VERSION);
       } else if (event.event === 'Progress') {
-        messageEl.textContent = downloadedKbMessage(Math.round(event.data.chunkLength / 1024));
+        setShellVersion(SHELL_APP_VERSION);
       } else if (event.event === 'Finished') {
-        messageEl.textContent = t('Обновление установлено. Перезапускаем приложение.');
+        setShellVersion(SHELL_APP_VERSION);
       }
     });
 
     clearStartupUpdateFailure();
     await relaunch();
   } catch (error) {
-    titleEl.textContent = t('Не удалось обновить');
-    messageEl.textContent = error instanceof Error ? error.message : String(error || t('Не удалось обновить'));
     setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry', 'update');
   } finally {
     setBusy(false);
@@ -556,5 +562,7 @@ void onOpenUrl((urls) => {
 });
 
 applyShellLanguage();
+setShellVersion();
+installLoadingWordRotation();
 installWindowControlsAutoReveal();
 void resolveInitialDeepLink().then(bootstrap);
