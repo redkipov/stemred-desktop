@@ -138,6 +138,12 @@ const SHELL_TRANSLATIONS: Record<string, Record<Exclude<ShellLocale, 'ru'>, stri
     ar: 'الخادم غير متاح',
     fr: 'Serveur indisponible',
   },
+  'Сервер недоступен. Открываем сохранённые данные.': {
+    en: 'Server unavailable. Opening saved data.',
+    es: 'Servidor no disponible. Abriendo datos guardados.',
+    ar: 'الخادم غير متاح. جار فتح البيانات المحفوظة.',
+    fr: 'Serveur indisponible. Ouverture des données enregistrées.',
+  },
   'Скрыть в трей': {
     en: 'Hide to tray',
     es: 'Ocultar en bandeja',
@@ -193,6 +199,7 @@ const WINDOW_CONTROLS_REVEAL_WIDTH = 190;
 const WINDOW_CONTROLS_REVEAL_HEIGHT = 110;
 const STARTUP_UPDATE_FAILURE_KEY = 'stemred_startup_update_failure_v1';
 const STARTUP_UPDATE_FAILURE_SUPPRESS_MS = 30 * 60 * 1000;
+const FALLBACK_REMOTE_URL = 'https://chat-stem.ru/messages';
 
 let latestBootstrap: BootstrapResult | null = null;
 let pendingDeepLinkUrl = '';
@@ -423,6 +430,10 @@ async function remoteUrlFor(result: BootstrapResult): Promise<string> {
 
 async function navigateToRemote(result: BootstrapResult) {
   const url = await remoteUrlFor(result);
+  navigateToRemoteUrl(url);
+}
+
+function navigateToRemoteUrl(url: string) {
   window.location.replace(url);
 }
 
@@ -463,15 +474,15 @@ async function bootstrap() {
       return;
     }
 
-    titleEl.textContent = t('Сервер недоступен');
-    messageEl.textContent = result.message || t('Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.');
-    setButtons('retry');
+    titleEl.textContent = t('Открываем StemRed');
+    messageEl.textContent = t('Сервер недоступен. Открываем сохранённые данные.');
+    await navigateToRemote(result);
   } catch (error) {
     latestBootstrap = null;
-    titleEl.textContent = t('Сервер недоступен');
-    messageEl.textContent = t('Не удалось получить конфигурацию приложения. Проверьте сеть и повторите попытку.');
+    titleEl.textContent = t('Открываем StemRed');
+    messageEl.textContent = t('Сервер недоступен. Открываем сохранённые данные.');
     detailsEl.textContent = error instanceof Error ? error.message : String(error || '');
-    setButtons('retry');
+    navigateToRemoteUrl(FALLBACK_REMOTE_URL);
   } finally {
     setBusy(false);
   }

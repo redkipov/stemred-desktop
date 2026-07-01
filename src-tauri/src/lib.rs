@@ -841,7 +841,7 @@ async fn bootstrap(app: AppHandle) -> Result<BootstrapResult, String> {
 
             Ok(BootstrapResult {
                 state,
-                remote_url: normalize_remote_url(&config.remote_url),
+                remote_url: desktop_remote_url(&config.remote_url),
                 current_shell_version,
                 min_shell_version: config.min_shell_version,
                 recommended_shell_version: config.recommended_shell_version,
@@ -854,7 +854,7 @@ async fn bootstrap(app: AppHandle) -> Result<BootstrapResult, String> {
             if remote_is_available(DEFAULT_REMOTE_URL).await {
                 Ok(BootstrapResult {
                     state: "ready".to_string(),
-                    remote_url: DEFAULT_REMOTE_URL.to_string(),
+                    remote_url: desktop_remote_url(DEFAULT_REMOTE_URL),
                     current_shell_version,
                     min_shell_version: "0.1.0".to_string(),
                     recommended_shell_version: "0.1.0".to_string(),
@@ -867,7 +867,7 @@ async fn bootstrap(app: AppHandle) -> Result<BootstrapResult, String> {
             } else {
                 Ok(BootstrapResult {
                     state: "offline".to_string(),
-                    remote_url: DEFAULT_REMOTE_URL.to_string(),
+                    remote_url: desktop_remote_url(DEFAULT_REMOTE_URL),
                     current_shell_version,
                     min_shell_version: "0.1.0".to_string(),
                     recommended_shell_version: "0.1.0".to_string(),
@@ -1773,9 +1773,15 @@ fn resolve_stem_deep_link(raw: &str, default_remote_url: &str) -> Option<String>
 
 fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
     let args: Vec<String> = std::env::args().collect();
-    let initial_url = initial_remote_url(&args);
+    if let Some(raw) = capture_argv_deep_link(&args) {
+        if let Some(state) = app.try_state::<DesktopState>() {
+            if let Ok(mut pending) = state.pending_deep_link.lock() {
+                *pending = Some(raw);
+            }
+        }
+    }
 
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(initial_url))
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("StemRed")
         .inner_size(1280.0, 820.0)
         .min_inner_size(390.0, 560.0)
@@ -1788,18 +1794,15 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
-fn initial_remote_url(args: &[String]) -> Url {
-    let target = capture_argv_deep_link(args)
-        .and_then(|raw| resolve_stem_deep_link(&raw, DEFAULT_REMOTE_URL))
-        .unwrap_or_else(|| DEFAULT_REMOTE_URL.to_string());
-
+fn desktop_remote_url(value: &str) -> String {
+    let target = normalize_remote_url(value);
     let mut url = Url::parse(&target).unwrap_or_else(|_| {
         Url::parse(DEFAULT_REMOTE_URL).expect("default remote URL must be valid")
     });
     url.query_pairs_mut()
         .append_pair("_stem_desktop_shell", env!("CARGO_PKG_VERSION"))
         .append_pair("_stem_desktop_start", &desktop_start_counter());
-    url
+    url.to_string()
 }
 
 fn desktop_start_counter() -> String {
