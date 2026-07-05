@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -9,6 +9,7 @@ use base64::{engine::general_purpose, Engine as _};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
+use tauri::plugin::PermissionState;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -18,6 +19,8 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
+
+mod platform_taskbar;
 
 const DEFAULT_REMOTE_URL: &str = "https://chat-stem.ru/messages";
 const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
@@ -708,6 +711,8 @@ struct DesktopState {
     microphone_access_enabled: Mutex<bool>,
     recent_notifications: Mutex<Vec<(String, u128)>>,
     pending_downloads: Mutex<HashMap<String, DesktopPendingDownload>>,
+    pending_file_reads: Mutex<HashMap<String, DesktopPendingFileRead>>,
+    music_player_state: Mutex<DesktopMusicPlayerState>,
 }
 
 impl Default for DesktopState {
@@ -718,8 +723,58 @@ impl Default for DesktopState {
             microphone_access_enabled: Mutex::new(true),
             recent_notifications: Mutex::new(Vec::new()),
             pending_downloads: Mutex::new(HashMap::new()),
+            pending_file_reads: Mutex::new(HashMap::new()),
+            music_player_state: Mutex::new(DesktopMusicPlayerState::default()),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicPlayerState {
+    artist: String,
+    buffering: bool,
+    can_next: bool,
+    can_play: bool,
+    can_previous: bool,
+    duration_sec: f64,
+    failed: bool,
+    favorite: bool,
+    pinned: bool,
+    playing: bool,
+    position_sec: f64,
+    source_label: String,
+    title: String,
+    track_key: Option<String>,
+}
+
+impl Default for DesktopMusicPlayerState {
+    fn default() -> Self {
+        Self {
+            artist: String::new(),
+            buffering: false,
+            can_next: false,
+            can_play: false,
+            can_previous: false,
+            duration_sec: 0.0,
+            failed: false,
+            favorite: false,
+            pinned: false,
+            playing: false,
+            position_sec: 0.0,
+            source_label: "StemRed Music".to_string(),
+            title: "StemRed Music".to_string(),
+            track_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicPlayerCommand {
+    command: String,
+    #[serde(default)]
+    position_sec: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -774,11 +829,32 @@ struct DesktopDownloadBeginResult {
     path: String,
 }
 
+#[derive(Debug, Serialize)]
+struct DesktopDownloadReadBeginResult {
+    transfer_id: String,
+    filename: String,
+    directory: String,
+    path: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopDownloadReadChunkResult {
+    chunk_base64: String,
+    bytes_read: usize,
+}
+
 #[derive(Debug, Clone)]
 struct DesktopPendingDownload {
     filename: String,
     directory: PathBuf,
     path: PathBuf,
+}
+
+#[derive(Debug)]
+struct DesktopPendingFileRead {
+    file: fs::File,
+    size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -934,6 +1010,69 @@ fn set_unread_count(
 }
 
 #[tauri::command]
+fn set_desktop_music_player_state(
+    app: AppHandle,
+    desktop_state: tauri::State<'_, DesktopState>,
+    state: DesktopMusicPlayerState,
+) -> Result<(), String> {
+    let state = normalize_desktop_music_player_state(state);
+    {
+        let mut current = desktop_state
+            .music_player_state
+            .lock()
+            .map_err(|_| "music player state is unavailable".to_string())?;
+        *current = state.clone();
+    }
+
+    emit_desktop_music_player_state(&app, &state);
+    platform_taskbar::update_music_controls(&app, &state);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_desktop_music_player_state(
+    desktop_state: tauri::State<'_, DesktopState>,
+) -> Result<DesktopMusicPlayerState, String> {
+    desktop_state
+        .music_player_state
+        .lock()
+        .map(|state| state.clone())
+        .map_err(|_| "music player state is unavailable".to_string())
+}
+
+#[tauri::command]
+fn set_desktop_music_mini_player_visible(
+    app: AppHandle,
+    desktop_state: tauri::State<'_, DesktopState>,
+    visible: bool,
+) -> Result<(), String> {
+    if visible {
+        let window = ensure_music_mini_window(&app)?;
+        window.show().map_err(|error| error.to_string())?;
+        let state = get_desktop_music_player_state(desktop_state)?;
+        emit_desktop_music_player_state(&app, &state);
+    } else if let Some(window) = app.get_webview_window("music-mini") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn desktop_music_player_command(
+    app: AppHandle,
+    command: DesktopMusicPlayerCommand,
+) -> Result<(), String> {
+    if command.command == "closeMini" {
+        if let Some(window) = app.get_webview_window("music-mini") {
+            let _ = window.hide();
+        }
+    }
+
+    app.emit("stem://music-player-command", command)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_autostart_enabled(app: AppHandle) -> Result<bool, String> {
     platform_autostart::is_enabled(&app)
 }
@@ -1030,6 +1169,22 @@ async fn install_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn ensure_desktop_notification_permission(app: AppHandle) -> Result<bool, String> {
+    let notification = app.notification();
+    let state = notification
+        .permission_state()
+        .map_err(|error| error.to_string())?;
+    let state = match state {
+        PermissionState::Prompt | PermissionState::PromptWithRationale => notification
+            .request_permission()
+            .map_err(|error| error.to_string())?,
+        other => other,
+    };
+
+    Ok(matches!(state, PermissionState::Granted))
+}
+
+#[tauri::command]
 fn show_desktop_notification(
     app: AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -1037,6 +1192,9 @@ fn show_desktop_notification(
 ) -> Result<(), String> {
     let title = payload.title.trim();
     if title.is_empty() {
+        return Ok(());
+    }
+    if !ensure_desktop_notification_permission(app.clone())? {
         return Ok(());
     }
     if is_duplicate_desktop_notification(&state, payload.dedupe_key.as_deref(), payload.dedupe_ms)?
@@ -1239,6 +1397,122 @@ fn find_file_in_downloads_stemred(
 }
 
 #[tauri::command]
+fn begin_file_read_from_downloads_stemred(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
+    path: String,
+) -> Result<DesktopDownloadReadBeginResult, String> {
+    let target = verified_stemred_download_file(&app, &path)?;
+    let metadata =
+        fs::metadata(&target).map_err(|error| format!("Не удалось проверить файл: {error}"))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err("Файл недоступен".to_string());
+    }
+
+    let file = fs::File::open(&target)
+        .map_err(|error| format!("Не удалось открыть файл для чтения: {error}"))?;
+    let directory = fs::canonicalize(stemred_download_directory(&app)?)
+        .map_err(|error| format!("Папка загрузок недоступна: {error}"))?;
+    let filename = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "stem-file".to_string());
+    let transfer_id = format!(
+        "{}-{}",
+        system_time_ms(Some(SystemTime::now())),
+        stable_hash(target.to_string_lossy().as_bytes())
+    );
+
+    state
+        .pending_file_reads
+        .lock()
+        .map_err(|_| "Не удалось подготовить чтение файла".to_string())?
+        .insert(
+            transfer_id.clone(),
+            DesktopPendingFileRead {
+                file,
+                size: metadata.len(),
+            },
+        );
+
+    Ok(DesktopDownloadReadBeginResult {
+        transfer_id,
+        filename,
+        directory: directory.to_string_lossy().to_string(),
+        path: target.to_string_lossy().to_string(),
+        size: metadata.len(),
+    })
+}
+
+#[tauri::command]
+fn read_file_chunk_from_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+    offset: u64,
+    length: usize,
+) -> Result<DesktopDownloadReadChunkResult, String> {
+    let transfer_id = transfer_id.trim();
+    if transfer_id.is_empty() {
+        return Err("Не найден идентификатор чтения".to_string());
+    }
+    if length == 0 {
+        return Ok(DesktopDownloadReadChunkResult {
+            chunk_base64: String::new(),
+            bytes_read: 0,
+        });
+    }
+
+    let mut reads = state
+        .pending_file_reads
+        .lock()
+        .map_err(|_| "Не удалось продолжить чтение файла".to_string())?;
+    let pending = reads
+        .get_mut(transfer_id)
+        .ok_or_else(|| "Чтение файла уже не активно".to_string())?;
+    if offset >= pending.size {
+        return Ok(DesktopDownloadReadChunkResult {
+            chunk_base64: String::new(),
+            bytes_read: 0,
+        });
+    }
+
+    let max_length = usize::try_from((pending.size - offset).min(length as u64))
+        .map_err(|_| "Некорректный размер части файла".to_string())?;
+    let mut buffer = vec![0u8; max_length];
+    pending
+        .file
+        .seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("Не удалось перейти к части файла: {error}"))?;
+    let bytes_read = pending
+        .file
+        .read(&mut buffer)
+        .map_err(|error| format!("Не удалось прочитать часть файла: {error}"))?;
+    buffer.truncate(bytes_read);
+
+    Ok(DesktopDownloadReadChunkResult {
+        chunk_base64: general_purpose::STANDARD.encode(buffer),
+        bytes_read,
+    })
+}
+
+#[tauri::command]
+fn finish_file_read_from_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    close_file_read_from_downloads_stemred(state, transfer_id)
+}
+
+#[tauri::command]
+fn cancel_file_read_from_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    close_file_read_from_downloads_stemred(state, transfer_id)
+}
+
+#[tauri::command]
 fn desktop_path_exists(path: String) -> bool {
     let value = path.trim();
     if value.is_empty() {
@@ -1255,8 +1529,8 @@ fn open_downloaded_file(app: AppHandle, path: String) -> Result<(), String> {
         return Err("Не указан путь к файлу".to_string());
     }
 
-    let target = fs::canonicalize(Path::new(value))
-        .map_err(|error| format!("Файл недоступен: {error}"))?;
+    let target =
+        fs::canonicalize(Path::new(value)).map_err(|error| format!("Файл недоступен: {error}"))?;
     if !target.is_file() {
         return Err("Можно открыть только файл".to_string());
     }
@@ -1559,6 +1833,44 @@ fn stemred_download_directory(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(directory)
 }
 
+fn verified_stemred_download_file(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let value = path.trim();
+    if value.is_empty() {
+        return Err("Не указан путь к файлу".to_string());
+    }
+
+    let target =
+        fs::canonicalize(Path::new(value)).map_err(|error| format!("Файл недоступен: {error}"))?;
+    if !target.is_file() {
+        return Err("Можно читать только файл".to_string());
+    }
+
+    let directory = fs::canonicalize(stemred_download_directory(app)?)
+        .map_err(|error| format!("Папка загрузок недоступна: {error}"))?;
+    if !target.starts_with(&directory) {
+        return Err("Файл находится вне папки загрузок StemRed".to_string());
+    }
+
+    Ok(target)
+}
+
+fn close_file_read_from_downloads_stemred(
+    state: tauri::State<'_, DesktopState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    let transfer_id = transfer_id.trim();
+    if transfer_id.is_empty() {
+        return Ok(());
+    }
+
+    state
+        .pending_file_reads
+        .lock()
+        .map_err(|_| "Не удалось закрыть чтение файла".to_string())?
+        .remove(transfer_id);
+    Ok(())
+}
+
 fn desktop_download_result(
     directory: &Path,
     target: &Path,
@@ -1795,6 +2107,31 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
+fn ensure_music_mini_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("music-mini") {
+        return Ok(window);
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        "music-mini",
+        WebviewUrl::App("mini-player.html".into()),
+    )
+    .title("StemRed Mini Player")
+    .inner_size(318.0, 288.0)
+    .min_inner_size(318.0, 288.0)
+    .max_inner_size(318.0, 288.0)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .shadow(true)
+    .disable_drag_drop_handler()
+    .build()
+    .map_err(|error| error.to_string())
+}
+
 fn desktop_remote_url(value: &str) -> String {
     let target = normalize_remote_url(value);
     let mut url = Url::parse(&target).unwrap_or_else(|_| {
@@ -1815,6 +2152,44 @@ fn desktop_now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
+}
+
+fn normalize_desktop_music_player_state(state: DesktopMusicPlayerState) -> DesktopMusicPlayerState {
+    DesktopMusicPlayerState {
+        artist: clamp_text(state.artist, 160),
+        buffering: state.buffering,
+        can_next: state.can_next,
+        can_play: state.can_play,
+        can_previous: state.can_previous,
+        duration_sec: finite_non_negative(state.duration_sec),
+        failed: state.failed,
+        favorite: state.favorite,
+        pinned: state.pinned,
+        playing: state.playing,
+        position_sec: finite_non_negative(state.position_sec),
+        source_label: clamp_text(state.source_label, 160),
+        title: clamp_text(state.title, 180),
+        track_key: state
+            .track_key
+            .map(|track_key| clamp_text(track_key, 220))
+            .filter(|track_key| !track_key.is_empty()),
+    }
+}
+
+fn finite_non_negative(value: f64) -> f64 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn clamp_text(value: String, max_chars: usize) -> String {
+    value.trim().chars().take(max_chars).collect()
+}
+
+fn emit_desktop_music_player_state(app: &AppHandle, state: &DesktopMusicPlayerState) {
+    let _ = app.emit("stem://music-player-state-changed", state);
 }
 
 fn is_duplicate_desktop_notification(
@@ -2304,6 +2679,10 @@ pub fn run() {
             take_pending_deep_link,
             open_external_url,
             set_unread_count,
+            set_desktop_music_player_state,
+            get_desktop_music_player_state,
+            set_desktop_music_mini_player_visible,
+            desktop_music_player_command,
             get_autostart_enabled,
             set_autostart_enabled,
             get_microphone_access_enabled,
@@ -2314,6 +2693,7 @@ pub fn run() {
             close_desktop_window_to_tray,
             check_desktop_shell_update,
             install_desktop_shell_update,
+            ensure_desktop_notification_permission,
             show_desktop_notification,
             save_file_to_downloads_stem,
             begin_file_save_to_downloads_stemred,
@@ -2321,6 +2701,10 @@ pub fn run() {
             finish_file_save_to_downloads_stemred,
             cancel_file_save_to_downloads_stemred,
             find_file_in_downloads_stemred,
+            begin_file_read_from_downloads_stemred,
+            read_file_chunk_from_downloads_stemred,
+            finish_file_read_from_downloads_stemred,
+            cancel_file_read_from_downloads_stemred,
             desktop_path_exists,
             open_downloaded_file,
             pick_music_directory,
@@ -2333,13 +2717,26 @@ pub fn run() {
                     api.prevent_close();
                     let _ = window.hide();
                 }
+            } else if window.label() == "music-mini" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    let _ = window.app_handle().emit(
+                        "stem://music-player-command",
+                        DesktopMusicPlayerCommand {
+                            command: "closeMini".to_string(),
+                            position_sec: None,
+                        },
+                    );
+                }
             }
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
             let _ = platform_autostart::ensure_default_enabled_once(&app_handle);
 
-            create_main_window(app)?;
+            let main_window = create_main_window(app)?;
+            platform_taskbar::install(&app_handle, &main_window);
             create_tray(app)?;
 
             #[cfg(any(windows, target_os = "linux"))]

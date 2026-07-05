@@ -11,4 +11,12 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 1420,
   },
+  build: {
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        miniPlayer: 'mini-player.html',
+      },
+    },
+  },
 });
