@@ -16,7 +16,7 @@ mod windows_taskbar {
         THBF_ENABLED, THBN_CLICKED, THB_FLAGS, THB_ICON, THB_TOOLTIP, THUMBBUTTON,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateIcon, RegisterWindowMessageW, HICON, WM_COMMAND,
+        CreateIcon, GetAncestor, RegisterWindowMessageW, GA_ROOT, HICON, WM_COMMAND,
     };
 
     use crate::{DesktopMusicPlayerCommand, DesktopMusicPlayerState};
@@ -30,6 +30,7 @@ mod windows_taskbar {
 
     static TASKBAR_APP: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();
     static TASKBAR_RUNTIME: OnceLock<Mutex<TaskbarRuntime>> = OnceLock::new();
+    static TASKBAR_STATE: OnceLock<Mutex<DesktopMusicPlayerState>> = OnceLock::new();
     static TASKBAR_BUTTON_MESSAGE: OnceLock<u32> = OnceLock::new();
     static TASKBAR_ICONS: OnceLock<[isize; 5]> = OnceLock::new();
 
@@ -128,7 +129,8 @@ mod windows_taskbar {
             *slot = Some(app.clone());
         }
 
-        let hwnd = hwnd.0 as HWND;
+        let hwnd = root_hwnd(hwnd.0 as HWND);
+        let _ = taskbar_button_created_message();
         let runtime = TASKBAR_RUNTIME.get_or_init(|| Mutex::new(TaskbarRuntime::default()));
         if let Ok(mut runtime) = runtime.lock() {
             runtime.hwnd = hwnd as isize;
@@ -141,10 +143,17 @@ mod windows_taskbar {
             }
         }
 
-        update_music_controls(app, &DesktopMusicPlayerState::default());
+        update_music_controls(app, &current_state());
     }
 
     pub fn update_music_controls(_app: &AppHandle, state: &DesktopMusicPlayerState) {
+        if let Ok(mut current) = TASKBAR_STATE
+            .get_or_init(|| Mutex::new(DesktopMusicPlayerState::default()))
+            .lock()
+        {
+            *current = state.clone();
+        }
+
         let Some(runtime) = TASKBAR_RUNTIME.get() else {
             return;
         };
@@ -177,7 +186,7 @@ mod windows_taskbar {
     ) -> LRESULT {
         if msg == taskbar_button_created_message() {
             if let Some(app) = current_app_handle() {
-                update_music_controls(&app, &DesktopMusicPlayerState::default());
+                update_music_controls(&app, &current_state());
             }
         } else if msg == WM_COMMAND && high_word(wparam) == THBN_CLICKED {
             if let Some(command) = command_for_button(low_word(wparam)) {
@@ -198,6 +207,23 @@ mod windows_taskbar {
         TASKBAR_APP
             .get()
             .and_then(|slot| slot.lock().ok().and_then(|slot| slot.clone()))
+    }
+
+    fn current_state() -> DesktopMusicPlayerState {
+        TASKBAR_STATE
+            .get()
+            .and_then(|state| state.lock().ok().map(|state| state.clone()))
+            .unwrap_or_default()
+    }
+
+    fn root_hwnd(hwnd: HWND) -> HWND {
+        // SAFETY: GetAncestor только нормализует HWND до root-окна текущего процесса.
+        let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+        if root.is_null() {
+            hwnd
+        } else {
+            root
+        }
     }
 
     fn command_for_button(id: u32) -> Option<DesktopMusicPlayerCommand> {
@@ -287,14 +313,9 @@ mod windows_taskbar {
                 } else {
                     "Добавить в избранное"
                 },
-                state.track_key.is_some(),
+                true,
             ),
-            thumb_button(
-                BUTTON_PREVIOUS,
-                icons[1] as HICON,
-                "Предыдущий трек",
-                state.can_previous,
-            ),
+            thumb_button(BUTTON_PREVIOUS, icons[1] as HICON, "Предыдущий трек", true),
             thumb_button(
                 BUTTON_PLAY,
                 if state.playing {
@@ -307,14 +328,9 @@ mod windows_taskbar {
                 } else {
                     "Проиграть"
                 },
-                state.can_play,
+                true,
             ),
-            thumb_button(
-                BUTTON_NEXT,
-                icons[4] as HICON,
-                "Следующий трек",
-                state.can_next,
-            ),
+            thumb_button(BUTTON_NEXT, icons[4] as HICON, "Следующий трек", true),
         ]
     }
 
