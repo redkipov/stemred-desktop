@@ -1,11 +1,14 @@
 #[cfg(windows)]
 mod windows_taskbar {
+    use std::fmt;
     use std::mem::size_of;
+    use std::sync::atomic::{AtomicU8, Ordering};
     use std::sync::{Mutex, OnceLock};
-    use std::thread;
     use std::time::Duration;
 
+    use tauri::async_runtime;
     use tauri::{AppHandle, Emitter, WebviewWindow};
+    use tokio::time::sleep;
     use windows::core::{IUnknown, PCWSTR};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Com::{
@@ -34,6 +37,7 @@ mod windows_taskbar {
     static TASKBAR_BUTTON_MESSAGE: OnceLock<u32> = OnceLock::new();
     static TASKBAR_ICONS: OnceLock<[isize; 5]> = OnceLock::new();
     static TASKBAR_STARTUP_RETRIES: OnceLock<()> = OnceLock::new();
+    static TASKBAR_DIAGNOSTIC_COUNT: AtomicU8 = AtomicU8::new(0);
 
     #[derive(Default)]
     struct TaskbarRuntime {
@@ -82,31 +86,28 @@ mod windows_taskbar {
             *current = state.clone();
         }
 
-        let Some(runtime) = TASKBAR_RUNTIME.get() else {
+        let Some((hwnd, toolbar_added)) = current_runtime_target() else {
             return;
         };
-        let Ok(mut runtime) = runtime.lock() else {
-            return;
-        };
-        if runtime.hwnd == 0 {
-            return;
-        }
-
-        let hwnd = HWND(runtime.hwnd as _);
         let buttons = taskbar_buttons(state);
-        if runtime.toolbar_added && thumbbar_update_buttons(hwnd, &buttons) {
-            return;
-        }
+        let toolbar_added = if toolbar_added {
+            match thumbbar_update_buttons(hwnd, &buttons) {
+                Ok(()) => true,
+                Err(error) => {
+                    log_taskbar_error("ThumbBarUpdateButtons", error);
+                    install_toolbar(hwnd, &buttons)
+                }
+            }
+        } else {
+            install_toolbar(hwnd, &buttons)
+        };
 
-        runtime.toolbar_added = false;
-        if thumbbar_add_buttons(hwnd, &buttons) {
-            runtime.toolbar_added = true;
-            let _ = thumbbar_update_buttons(hwnd, &buttons);
-            return;
-        }
-
-        if thumbbar_update_buttons(hwnd, &buttons) {
-            runtime.toolbar_added = true;
+        if let Some(runtime) = TASKBAR_RUNTIME.get() {
+            if let Ok(mut runtime) = runtime.lock() {
+                if runtime.hwnd == hwnd.0 as isize {
+                    runtime.toolbar_added = toolbar_added;
+                }
+            }
         }
     }
 
@@ -155,6 +156,15 @@ mod windows_taskbar {
             .unwrap_or_default()
     }
 
+    fn current_runtime_target() -> Option<(HWND, bool)> {
+        let runtime = TASKBAR_RUNTIME.get()?;
+        let runtime = runtime.lock().ok()?;
+        if runtime.hwnd == 0 {
+            return None;
+        }
+        Some((HWND(runtime.hwnd as _), runtime.toolbar_added))
+    }
+
     fn root_hwnd(hwnd: HWND) -> HWND {
         // SAFETY: GetAncestor только нормализует HWND до root-окна текущего процесса.
         let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
@@ -187,15 +197,20 @@ mod windows_taskbar {
         })
     }
 
-    fn thumbbar_add_buttons(hwnd: HWND, buttons: &[THUMBBUTTON; 4]) -> bool {
+    fn thumbbar_add_buttons(hwnd: HWND, buttons: &[THUMBBUTTON; 4]) -> windows::core::Result<()> {
         with_taskbar_list(|taskbar| unsafe { taskbar.ThumbBarAddButtons(hwnd, buttons) })
     }
 
-    fn thumbbar_update_buttons(hwnd: HWND, buttons: &[THUMBBUTTON; 4]) -> bool {
+    fn thumbbar_update_buttons(
+        hwnd: HWND,
+        buttons: &[THUMBBUTTON; 4],
+    ) -> windows::core::Result<()> {
         with_taskbar_list(|taskbar| unsafe { taskbar.ThumbBarUpdateButtons(hwnd, buttons) })
     }
 
-    fn with_taskbar_list(f: impl FnOnce(&ITaskbarList3) -> windows::core::Result<()>) -> bool {
+    fn with_taskbar_list(
+        f: impl FnOnce(&ITaskbarList3) -> windows::core::Result<()>,
+    ) -> windows::core::Result<()> {
         // SAFETY: COM инициализируется только на время операции; typed binding освобождает интерфейс через Drop.
         unsafe {
             let init_hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -212,7 +227,26 @@ mod windows_taskbar {
             if should_uninit {
                 CoUninitialize();
             }
-            result.is_ok()
+            result
+        }
+    }
+
+    fn install_toolbar(hwnd: HWND, buttons: &[THUMBBUTTON; 4]) -> bool {
+        match thumbbar_add_buttons(hwnd, buttons) {
+            Ok(()) => {
+                if let Err(error) = thumbbar_update_buttons(hwnd, buttons) {
+                    log_taskbar_error("ThumbBarUpdateButtons after add", error);
+                }
+                true
+            }
+            Err(add_error) => match thumbbar_update_buttons(hwnd, buttons) {
+                Ok(()) => true,
+                Err(update_error) => {
+                    log_taskbar_error("ThumbBarAddButtons", add_error);
+                    log_taskbar_error("ThumbBarUpdateButtons fallback", update_error);
+                    false
+                }
+            },
         }
     }
 
@@ -405,16 +439,24 @@ mod windows_taskbar {
             return;
         }
 
-        thread::spawn(move || {
+        async_runtime::spawn(async move {
             for delay_ms in [250, 1000, 2500] {
-                thread::sleep(Duration::from_millis(delay_ms));
+                sleep(Duration::from_millis(delay_ms)).await;
                 let app_for_call = app.clone();
                 let app_for_update = app.clone();
-                let _ = app_for_call.run_on_main_thread(move || {
+                if let Err(error) = app_for_call.run_on_main_thread(move || {
                     update_music_controls(&app_for_update, &current_state());
-                });
+                }) {
+                    log_taskbar_error("run_on_main_thread", error);
+                }
             }
         });
+    }
+
+    fn log_taskbar_error(operation: &str, error: impl fmt::Display) {
+        if TASKBAR_DIAGNOSTIC_COUNT.fetch_add(1, Ordering::Relaxed) < 8 {
+            eprintln!("StemRed taskbar controls: {operation} failed: {error}");
+        }
     }
 
     fn wide_null(value: &str) -> Vec<u16> {
