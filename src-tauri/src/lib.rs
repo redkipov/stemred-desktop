@@ -44,7 +44,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
   const CONTROLS_REVEAL_HEIGHT = 110;
   const CONTROL_SELECTOR = '.stem-native-window-button,.stem-desktop-window-button,.window-control,[data-stem-window-command]';
   const DRAG_REGION_SELECTOR = '[data-stem-desktop-drag-region],.stem-native-window-drag-zone';
-  const NO_DRAG_SELECTOR = '[data-stem-desktop-no-drag],[data-tauri-drag-region="false"]';
+  const NO_DRAG_SELECTOR = '[data-stem-desktop-no-drag]';
   const INTERACTIVE_SELECTOR = 'a,button,input,select,textarea,label,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="radio"],[role="switch"],[role="option"]';
   let patchScheduled = false;
   let controlsRevealInstalled = false;
@@ -459,10 +459,10 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
     layer.className = 'stem-native-window-drag-layer';
     layer.setAttribute('aria-hidden', 'true');
     layer.innerHTML = `
-      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--top" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
-      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--left" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
-      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--right" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
-      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--bottom" data-stem-desktop-drag-region data-tauri-drag-region="deep"></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--top" data-stem-desktop-drag-region></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--left" data-stem-desktop-drag-region></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--right" data-stem-desktop-drag-region></div>
+      <div class="stem-native-window-drag-zone stem-native-window-drag-zone--bottom" data-stem-desktop-drag-region></div>
     `;
     return layer;
   }
@@ -544,6 +544,10 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
   }
 
   function installDragRegions() {
+    document
+      .querySelectorAll('[data-tauri-drag-region="deep"],[data-tauri-drag-region="false"]')
+      .forEach((element) => element.removeAttribute('data-tauri-drag-region'));
+
     const surfaces = [
       '.stem-app-window-content',
       '.stem-web-shell',
@@ -565,9 +569,9 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 
     for (const selector of surfaces) {
       for (const element of document.querySelectorAll(selector)) {
-        if (element instanceof HTMLElement && element.getAttribute('data-tauri-drag-region') !== 'deep') {
+        if (element instanceof HTMLElement) {
           element.setAttribute('data-stem-desktop-drag-region', '');
-          element.setAttribute('data-tauri-drag-region', 'deep');
+          element.removeAttribute('data-tauri-drag-region');
         }
       }
     }
@@ -576,7 +580,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
       for (const element of document.querySelectorAll(selector)) {
         if (element instanceof HTMLElement) {
           if (!element.hasAttribute('data-stem-desktop-no-drag')) element.setAttribute('data-stem-desktop-no-drag', '');
-          if (element.getAttribute('data-tauri-drag-region') !== 'false') element.setAttribute('data-tauri-drag-region', 'false');
+          element.removeAttribute('data-tauri-drag-region');
         }
       }
     }
@@ -586,7 +590,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
         if (element instanceof HTMLElement) {
           if (element.hasAttribute('data-stem-desktop-no-drag')) element.removeAttribute('data-stem-desktop-no-drag');
           if (!element.hasAttribute('data-stem-desktop-drag-region')) element.setAttribute('data-stem-desktop-drag-region', '');
-          if (element.getAttribute('data-tauri-drag-region') !== 'deep') element.setAttribute('data-tauri-drag-region', 'deep');
+          element.removeAttribute('data-tauri-drag-region');
         }
       }
     }
@@ -646,7 +650,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 
     for (const element of eventElementPath(event)) {
       if (element.matches(CONTROL_SELECTOR)) return false;
-      const hasDragRegion = element.matches(DRAG_REGION_SELECTOR) || element.getAttribute('data-tauri-drag-region') === 'deep';
+      const hasDragRegion = element.matches(DRAG_REGION_SELECTOR);
       if (element.matches(INTERACTIVE_SELECTOR) && !hasDragRegion) return false;
       if (element.matches(NO_DRAG_SELECTOR)) return false;
       if (hasDragRegion) return true;
