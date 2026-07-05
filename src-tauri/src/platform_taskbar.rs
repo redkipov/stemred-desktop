@@ -133,7 +133,12 @@ mod windows_taskbar {
         let _ = taskbar_button_created_message();
         let runtime = TASKBAR_RUNTIME.get_or_init(|| Mutex::new(TaskbarRuntime::default()));
         if let Ok(mut runtime) = runtime.lock() {
-            runtime.hwnd = hwnd as isize;
+            let next_hwnd = hwnd as isize;
+            if runtime.hwnd != next_hwnd {
+                runtime.hwnd = next_hwnd;
+                runtime.toolbar_added = false;
+                runtime.subclass_installed = false;
+            }
             if !runtime.subclass_installed {
                 // SAFETY: hwnd принадлежит главному окну текущего процесса; callback статический.
                 let installed = unsafe {
@@ -166,14 +171,20 @@ mod windows_taskbar {
 
         let hwnd = runtime.hwnd as HWND;
         let mut buttons = taskbar_buttons(state);
-        if !runtime.toolbar_added {
-            if thumbbar_add_buttons(hwnd, &mut buttons) {
-                runtime.toolbar_added = true;
-            }
+        if runtime.toolbar_added && thumbbar_update_buttons(hwnd, &mut buttons) {
             return;
         }
 
-        let _ = thumbbar_update_buttons(hwnd, &mut buttons);
+        runtime.toolbar_added = false;
+        if thumbbar_add_buttons(hwnd, &mut buttons) {
+            runtime.toolbar_added = true;
+            let _ = thumbbar_update_buttons(hwnd, &mut buttons);
+            return;
+        }
+
+        if thumbbar_update_buttons(hwnd, &mut buttons) {
+            runtime.toolbar_added = true;
+        }
     }
 
     unsafe extern "system" fn taskbar_subclass_proc(
@@ -185,6 +196,11 @@ mod windows_taskbar {
         _ref_data: usize,
     ) -> LRESULT {
         if msg == taskbar_button_created_message() {
+            if let Some(runtime) = TASKBAR_RUNTIME.get() {
+                if let Ok(mut runtime) = runtime.lock() {
+                    runtime.toolbar_added = false;
+                }
+            }
             if let Some(app) = current_app_handle() {
                 update_music_controls(&app, &current_state());
             }

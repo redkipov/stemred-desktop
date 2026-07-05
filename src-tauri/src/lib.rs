@@ -409,8 +409,9 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
   function setNativeControlsVisible(visible) {
     const controls = document.getElementById(CONTROLS_ID);
     if (!controls) return;
-    controls.classList.toggle('stem-native-window-controls--visible', visible);
-    controls.classList.toggle('stem-native-window-controls--hidden', !visible);
+    const nextVisible = visible || controls.classList.contains('stem-native-window-controls--fallback');
+    controls.classList.toggle('stem-native-window-controls--visible', nextVisible);
+    controls.classList.toggle('stem-native-window-controls--hidden', !nextVisible);
   }
 
   function isPointerNearControlsCorner() {
@@ -619,6 +620,7 @@ const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
     installNativeControls();
     installNativeControlsAutoReveal();
     installDragLayer();
+    installDragRegions();
   }
 
   function schedulePatchChrome() {
