@@ -30,7 +30,8 @@ mod windows_taskbar {
     const BUTTON_PLAY: u32 = 4103;
     const BUTTON_NEXT: u32 = 4104;
     const SUBCLASS_ID: usize = 4100;
-    const TASKBAR_ICON_SIZE: usize = 20;
+    const TASKBAR_ICON_SIZE: usize = 24;
+    const ICON_SUPERSAMPLE: usize = 4;
 
     static TASKBAR_APP: OnceLock<Mutex<Option<AppHandle>>> = OnceLock::new();
     static TASKBAR_RUNTIME: OnceLock<Mutex<TaskbarRuntime>> = OnceLock::new();
@@ -39,6 +40,15 @@ mod windows_taskbar {
     static TASKBAR_ICONS: OnceLock<[isize; 5]> = OnceLock::new();
     static TASKBAR_STARTUP_RETRIES: OnceLock<()> = OnceLock::new();
     static TASKBAR_DIAGNOSTIC_COUNT: AtomicU8 = AtomicU8::new(0);
+
+    #[derive(Clone, Copy)]
+    enum TaskbarIcon {
+        FavoriteAdd,
+        Previous,
+        Play,
+        Pause,
+        Next,
+    }
 
     #[derive(Default)]
     struct TaskbarRuntime {
@@ -187,6 +197,7 @@ mod windows_taskbar {
         Some(DesktopMusicPlayerCommand {
             command: command.to_string(),
             position_sec: None,
+            source: Some("taskbar".to_string()),
         })
     }
 
@@ -306,135 +317,25 @@ mod windows_taskbar {
     fn taskbar_icons() -> &'static [isize; 5] {
         TASKBAR_ICONS.get_or_init(|| {
             [
-                create_icon(&[
-                    "00000011111100000000",
-                    "00001111111111000000",
-                    "00011100000011100000",
-                    "00111000000001110000",
-                    "01110000000000111000",
-                    "01100000000000011000",
-                    "11100000110000011100",
-                    "11100000110000011100",
-                    "11000011111100001100",
-                    "11000011111100001100",
-                    "11000011111100001100",
-                    "11000011111100001100",
-                    "11100000110000011100",
-                    "11100000110000011100",
-                    "01100000000000011000",
-                    "01110000000000111000",
-                    "00111000000001110000",
-                    "00011100000011100000",
-                    "00001111111111000000",
-                    "00000011111100000000",
-                ])
-                .0 as isize,
-                create_icon(&[
-                    "00000000000000000000",
-                    "00000000000000000000",
-                    "00000001000010000000",
-                    "00011001100011000000",
-                    "00011001110011100000",
-                    "00011001111011110000",
-                    "00011001111111111000",
-                    "00011001111111111100",
-                    "00011001111111111110",
-                    "00011001111111111110",
-                    "00011001111111111110",
-                    "00011001111111111110",
-                    "00011001111111111100",
-                    "00011001111111111000",
-                    "00011001111011110000",
-                    "00011001110011100000",
-                    "00011001100011000000",
-                    "00000001000010000000",
-                    "00000000000000000000",
-                    "00000000000000000000",
-                ])
-                .0 as isize,
-                create_icon(&[
-                    "00000000000000000000",
-                    "00000000000000000000",
-                    "00000011000000000000",
-                    "00000011100000000000",
-                    "00000011110000000000",
-                    "00000011111000000000",
-                    "00000011111100000000",
-                    "00000011111110000000",
-                    "00000011111111000000",
-                    "00000011111111100000",
-                    "00000011111111110000",
-                    "00000011111111110000",
-                    "00000011111111100000",
-                    "00000011111111000000",
-                    "00000011111110000000",
-                    "00000011111100000000",
-                    "00000011111000000000",
-                    "00000011110000000000",
-                    "00000000000000000000",
-                    "00000000000000000000",
-                ])
-                .0 as isize,
-                create_icon(&[
-                    "00000000000000000000",
-                    "00000000000000000000",
-                    "00000000000000000000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000011100011100000",
-                    "00000000000000000000",
-                    "00000000000000000000",
-                    "00000000000000000000",
-                ])
-                .0 as isize,
-                create_icon(&[
-                    "00000000000000000000",
-                    "00000000000000000000",
-                    "00000001000010000000",
-                    "00000011000110001100",
-                    "00000111001110001100",
-                    "00001111011110001100",
-                    "00011111111110001100",
-                    "00111111111110001100",
-                    "01111111111110001100",
-                    "01111111111110001100",
-                    "01111111111110001100",
-                    "01111111111110001100",
-                    "00111111111110001100",
-                    "00011111111110001100",
-                    "00001111011110001100",
-                    "00000111001110001100",
-                    "00000011000110001100",
-                    "00000001000010000000",
-                    "00000000000000000000",
-                    "00000000000000000000",
-                ])
-                .0 as isize,
+                create_icon(TaskbarIcon::FavoriteAdd).0 as isize,
+                create_icon(TaskbarIcon::Previous).0 as isize,
+                create_icon(TaskbarIcon::Play).0 as isize,
+                create_icon(TaskbarIcon::Pause).0 as isize,
+                create_icon(TaskbarIcon::Next).0 as isize,
             ]
         })
     }
 
-    fn create_icon(rows: &[&str; TASKBAR_ICON_SIZE]) -> HICON {
-        let (and_bits, xor_bits) = icon_bits(rows);
-        // SAFETY: обе битовые маски рассчитаны под 1 bpp с word-aligned stride.
+    fn create_icon(icon: TaskbarIcon) -> HICON {
+        let (and_bits, xor_bits) = icon_bits(icon);
+        // SAFETY: AND-маска рассчитана под 1 bpp, XOR-слой под 32 bpp BGRA.
         unsafe {
             CreateIcon(
                 None,
                 TASKBAR_ICON_SIZE as i32,
                 TASKBAR_ICON_SIZE as i32,
                 1,
-                1,
+                32,
                 and_bits.as_ptr(),
                 xor_bits.as_ptr(),
             )
@@ -442,22 +343,86 @@ mod windows_taskbar {
         }
     }
 
-    fn icon_bits(rows: &[&str; TASKBAR_ICON_SIZE]) -> (Vec<u8>, Vec<u8>) {
+    fn icon_bits(icon: TaskbarIcon) -> (Vec<u8>, Vec<u8>) {
         let stride = ((TASKBAR_ICON_SIZE + 15) / 16) * 2;
         let mut and_bits = vec![0xffu8; stride * TASKBAR_ICON_SIZE];
-        let mut xor_bits = vec![0u8; stride * TASKBAR_ICON_SIZE];
-        for (y, row) in rows.iter().enumerate() {
-            let bytes = row.as_bytes();
+        let mut xor_bits = vec![0u8; TASKBAR_ICON_SIZE * TASKBAR_ICON_SIZE * 4];
+        for y in 0..TASKBAR_ICON_SIZE {
             for x in 0..TASKBAR_ICON_SIZE {
-                if bytes.get(x) == Some(&b'1') {
+                let alpha = icon_alpha(icon, x, y);
+                if alpha > 0 {
                     let index = y * stride + x / 8;
                     let mask = 0x80 >> (x % 8);
                     and_bits[index] &= !mask;
-                    xor_bits[index] |= mask;
+                    let color_index = (y * TASKBAR_ICON_SIZE + x) * 4;
+                    xor_bits[color_index] = alpha;
+                    xor_bits[color_index + 1] = alpha;
+                    xor_bits[color_index + 2] = alpha;
+                    xor_bits[color_index + 3] = alpha;
                 }
             }
         }
         (and_bits, xor_bits)
+    }
+
+    fn icon_alpha(icon: TaskbarIcon, x: usize, y: usize) -> u8 {
+        let mut covered = 0;
+        for sample_y in 0..ICON_SUPERSAMPLE {
+            for sample_x in 0..ICON_SUPERSAMPLE {
+                let px = x as f32 + (sample_x as f32 + 0.5) / ICON_SUPERSAMPLE as f32;
+                let py = y as f32 + (sample_y as f32 + 0.5) / ICON_SUPERSAMPLE as f32;
+                if icon_contains(icon, px, py) {
+                    covered += 1;
+                }
+            }
+        }
+        ((covered * 255) / (ICON_SUPERSAMPLE * ICON_SUPERSAMPLE)) as u8
+    }
+
+    fn icon_contains(icon: TaskbarIcon, x: f32, y: f32) -> bool {
+        match icon {
+            TaskbarIcon::FavoriteAdd => favorite_add_icon_contains(x, y),
+            TaskbarIcon::Previous => {
+                rect_contains(x, y, 4.8, 5.0, 7.2, 19.0)
+                    || triangle_contains(x, y, (18.8, 5.0), (18.8, 19.0), (7.2, 12.0))
+            }
+            TaskbarIcon::Play => triangle_contains(x, y, (7.0, 5.0), (7.0, 19.0), (19.0, 12.0)),
+            TaskbarIcon::Pause => {
+                rect_contains(x, y, 6.8, 5.0, 10.5, 19.0)
+                    || rect_contains(x, y, 13.5, 5.0, 17.2, 19.0)
+            }
+            TaskbarIcon::Next => {
+                triangle_contains(x, y, (5.2, 5.0), (5.2, 19.0), (16.8, 12.0))
+                    || rect_contains(x, y, 16.8, 5.0, 19.2, 19.0)
+            }
+        }
+    }
+
+    fn favorite_add_icon_contains(x: f32, y: f32) -> bool {
+        let dx = x - 12.0;
+        let dy = y - 12.0;
+        let distance = (dx * dx + dy * dy).sqrt();
+        let ring = (7.2..=9.6).contains(&distance);
+        let vertical = rect_contains(x, y, 11.0, 7.2, 13.0, 16.8);
+        let horizontal = rect_contains(x, y, 7.2, 11.0, 16.8, 13.0);
+        ring || vertical || horizontal
+    }
+
+    fn rect_contains(x: f32, y: f32, left: f32, top: f32, right: f32, bottom: f32) -> bool {
+        x >= left && x <= right && y >= top && y <= bottom
+    }
+
+    fn triangle_contains(x: f32, y: f32, a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
+        let d1 = triangle_sign(x, y, a, b);
+        let d2 = triangle_sign(x, y, b, c);
+        let d3 = triangle_sign(x, y, c, a);
+        let has_negative = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let has_positive = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+        !(has_negative && has_positive)
+    }
+
+    fn triangle_sign(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
+        (x - b.0) * (a.1 - b.1) - (a.0 - b.0) * (y - b.1)
     }
 
     fn low_word(value: WPARAM) -> u32 {

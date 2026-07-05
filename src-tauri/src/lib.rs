@@ -777,6 +777,8 @@ struct DesktopMusicPlayerCommand {
     command: String,
     #[serde(default)]
     position_sec: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2728,6 +2730,7 @@ pub fn run() {
                         DesktopMusicPlayerCommand {
                             command: "closeMini".to_string(),
                             position_sec: None,
+                            source: None,
                         },
                     );
                 }
