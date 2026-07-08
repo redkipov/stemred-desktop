@@ -230,7 +230,8 @@ function Assert-PublicInstallerSignature {
 function Sign-UpdaterArtifact {
   param(
     [Parameter(Mandatory = $true)]
-    [System.IO.FileInfo] $Installer
+    [System.IO.FileInfo] $Installer,
+    [switch] $Required
   )
 
   if (-not $Installer.Exists) {
@@ -245,7 +246,11 @@ function Sign-UpdaterArtifact {
   } elseif ($env:TAURI_SIGNING_PRIVATE_KEY) {
     $args += @("--private-key", $env:TAURI_SIGNING_PRIVATE_KEY)
   } else {
-    Write-Warning "Updater artifact signing skipped: set TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH."
+    $message = "Updater artifact signing skipped: set TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH."
+    if ($Required) {
+      throw $message
+    }
+    Write-Warning $message
     return
   }
 
@@ -326,9 +331,10 @@ if (($artifactDlib -and -not $artifactMetadata) -or ($artifactMetadata -and -not
 }
 
 $hasSigningConfig = $env:STEM_CODESIGN_THUMBPRINT -or $env:STEM_CODESIGN_PFX -or $hasArtifactSigningConfig
+$isProductionRelease = [bool]($BumpPatch -or $Version)
 if (-not $hasSigningConfig) {
-  if ($MicrosoftStore) {
-    throw "Microsoft Store code signing is not configured. Set STEM_CODESIGN_ARTIFACT_DLIB/STEM_CODESIGN_ARTIFACT_METADATA, STEM_CODESIGN_PFX, or STEM_CODESIGN_THUMBPRINT."
+  if ($MicrosoftStore -or $isProductionRelease) {
+    throw "Production desktop release code signing is not configured. Set STEM_CODESIGN_ARTIFACT_DLIB/STEM_CODESIGN_ARTIFACT_METADATA, STEM_CODESIGN_PFX, or STEM_CODESIGN_THUMBPRINT."
   }
 
   Write-Warning "Public code signing is not configured. Building an unsigned installer."
@@ -380,11 +386,11 @@ try {
     exit $buildCode
   }
   $installer = Get-LatestNsisInstaller
-  if ($MicrosoftStore) {
+  if ($MicrosoftStore -or $isProductionRelease) {
     Assert-PublicInstallerSignature -Installer $installer
   }
   if (-not $MicrosoftStore) {
-    Sign-UpdaterArtifact -Installer $installer
+    Sign-UpdaterArtifact -Installer $installer -Required:$isProductionRelease
   }
   Publish-ReleaseInstaller -Installer $installer -MicrosoftStore:$MicrosoftStore
   exit 0

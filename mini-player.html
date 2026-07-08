@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StemRed Mini Player</title>
+  </head>
+  <body class="mini-player-body">
+    <main class="mini-player" aria-label="Мини-плеер StemRed">
+      <header class="mini-player__topbar" data-drag-region>
+        <span class="mini-player__icon mini-player__brand" aria-hidden="true">⌘</span>
+        <div class="mini-player__grip" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <button id="mini-close" class="mini-player__icon" type="button" aria-label="Закрыть">×</button>
+      </header>
+
+      <section class="mini-player__art" data-drag-region>
+        <div id="mini-visual" class="mini-player__visual" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div class="mini-player__controls" aria-label="Управление музыкой">
+          <button id="mini-favorite" class="mini-player__secondary" type="button" aria-label="Добавить в избранное">＋</button>
+          <button id="mini-prev" class="mini-player__secondary" type="button" aria-label="Предыдущий трек">‹</button>
+          <button id="mini-play" class="mini-player__primary" type="button" aria-label="Проиграть">▶</button>
+          <button id="mini-next" class="mini-player__secondary" type="button" aria-label="Следующий трек">›</button>
+        </div>
+      </section>
+
+      <div class="mini-player__timeline">
+        <span id="mini-position">0:00</span>
+        <span id="mini-duration">0:00</span>
+        <div id="mini-progress" class="mini-player__progress" role="slider" aria-label="Перемотка" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <span id="mini-progress-fill"></span>
+        </div>
+      </div>
+
+      <section class="mini-player__meta">
+        <strong id="mini-title">StemRed Music</strong>
+        <span id="mini-source">Избранное</span>
+      </section>
+    </main>
+    <script type="module" src="/src/mini-player.ts"></script>
+  </body>
+</html>

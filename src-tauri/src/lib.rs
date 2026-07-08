@@ -30,6 +30,10 @@ const DESKTOP_NOTIFICATION_RECENT_LIMIT: usize = 128;
 const DESKTOP_MUSIC_FOLDERS_FILE: &str = "music-folders.json";
 const DESKTOP_MUSIC_MAX_FILES: usize = 600;
 const DESKTOP_MUSIC_MAX_DEPTH: usize = 4;
+#[cfg(windows)]
+const DESKTOP_AUTO_UPDATE_INITIAL_DELAY_SECS: u64 = 30;
+#[cfg(windows)]
+const DESKTOP_AUTO_UPDATE_INTERVAL_SECS: u64 = 6 * 60 * 60;
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 (() => {
@@ -1158,6 +1162,10 @@ async fn check_desktop_shell_update(app: AppHandle) -> Result<DesktopShellUpdate
 
 #[tauri::command]
 async fn install_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
+    install_available_desktop_shell_update(app).await
+}
+
+async fn install_available_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
     let update = app
         .updater()
         .map_err(|error| error.to_string())?
@@ -1174,6 +1182,28 @@ async fn install_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
         .await
         .map_err(|error| error.to_string())?;
     app.restart()
+}
+
+#[cfg(windows)]
+fn spawn_desktop_auto_update(app: AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(DESKTOP_AUTO_UPDATE_INITIAL_DELAY_SECS)).await;
+
+        loop {
+            if install_available_desktop_shell_update(app.clone())
+                .await
+                .unwrap_or(false)
+            {
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_secs(DESKTOP_AUTO_UPDATE_INTERVAL_SECS)).await;
+        }
+    });
 }
 
 #[tauri::command]
@@ -2747,6 +2777,8 @@ pub fn run() {
             let main_window = create_main_window(app)?;
             platform_taskbar::install(&app_handle, &main_window);
             create_tray(app)?;
+            #[cfg(windows)]
+            spawn_desktop_auto_update(app_handle.clone());
 
             #[cfg(any(windows, target_os = "linux"))]
             {
