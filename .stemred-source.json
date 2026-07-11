@@ -1,0 +1,234 @@
+{
+  "file_count": 45,
+  "files": [
+    {
+      "path": ".env.example",
+      "sha256": "0edcaeeeb995287ccccc463f029a116dcd710ca601e72e2e53da5730ddd0d63e",
+      "size": 301
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "53591c42693f5bacc7c83d24d324aefbd9ebe170c3690e5622e721e21093bd7e",
+      "size": 173
+    },
+    {
+      "path": "CODE_SIGNING_POLICY.md",
+      "sha256": "6629ef8f3e1446aeea262bcb74f3b541c31303ec9c96d36bd3c3631514d9078b",
+      "size": 1670
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "0f024cf5ad83c8e555007fc30dd145bd056bd5b4a3dd9f9ba6a036884fb10cae",
+      "size": 684
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "31af5b15d84feeb006afbbc5e2bf3fddb41880fc75ce999242b3cee5de035c4e",
+      "size": 1107
+    },
+    {
+      "path": "PRIVACY.md",
+      "sha256": "0d430546c20d6599c6f83da035e477fe1e51727648a4d00047231c6db353dd0b",
+      "size": 1095
+    },
+    {
+      "path": "README.md",
+      "sha256": "35afe919e81e9421c9882507d146ac889f30d10829c59180777d0db04456a52a",
+      "size": 3813
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "1890b4ce6b44012367b557f88c0851a47e7c9a4d05f347786d0f0d6700c8ef73",
+      "size": 747
+    },
+    {
+      "path": "index.html",
+      "sha256": "0bb9797926d7c23e20115d7fb0f6065c077809fed1b1d76c93ff963dcf05f81e",
+      "size": 2152
+    },
+    {
+      "path": "mini-player.html",
+      "sha256": "a621ab4c4f7fe07210e4b000419db9729cc0bca0217db88ede7a6a12c856c793",
+      "size": 2311
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "2554287236f54dded553f97a686eb2fafdd037b944d4e0b7773b3c152dab7888",
+      "size": 44106
+    },
+    {
+      "path": "package.json",
+      "sha256": "bf65b4505dcbfeae6eb5c7f79f9945a23cf8318e19644f976a78f53b67c10eb4",
+      "size": 1342
+    },
+    {
+      "path": "public/stemred-logo.png",
+      "sha256": "1e9482df85bd30def5c122c3d8d21f3771868d231aa604fcc978c842f81d1516",
+      "size": 158029
+    },
+    {
+      "path": "scripts/build-windows.ps1",
+      "sha256": "35562ca6a46f45806d56ac9910d54a426b63f653bb32719306ff8b6d11d2a6fc",
+      "size": 12265
+    },
+    {
+      "path": "scripts/check-music-runtime.mjs",
+      "sha256": "8fac81f40b21e7500a1d819443d635cfbcc89bd0122a128f8988a3af87383a7b",
+      "size": 2482
+    },
+    {
+      "path": "scripts/sign-windows.ps1",
+      "sha256": "e0b5d17f220190d8f7df85168fbfcc5b7b5d6af75fcbe10a6aec0aa4c9e70344",
+      "size": 3057
+    },
+    {
+      "path": "src-tauri/Cargo.lock",
+      "sha256": "683dbc4815dbf25a669548c9598a66524871ef7252099cef05452f98b096e56f",
+      "size": 151443
+    },
+    {
+      "path": "src-tauri/Cargo.toml",
+      "sha256": "66f93829c43f70c1a50dae0fdfe510520a59bec93f3891347def3c217676f6cb",
+      "size": 1622
+    },
+    {
+      "path": "src-tauri/build.rs",
+      "sha256": "4ae2333b11623039cc115e29b696e7ff5cdfcd5b7d628280ddf48fa733e6418d",
+      "size": 42
+    },
+    {
+      "path": "src-tauri/capabilities/desktop-local.json",
+      "sha256": "10c9e44ee749e1cd93fd4c0d014b174d6c680b0221ad18c716e85d3e5df869ba",
+      "size": 541
+    },
+    {
+      "path": "src-tauri/capabilities/desktop-remote.json",
+      "sha256": "f9d3b786f7ceaedc4116fb6d5c92070ea9659be085d58f44f5709af0f16403f1",
+      "size": 600
+    },
+    {
+      "path": "src-tauri/gen/schemas/acl-manifests.json",
+      "sha256": "99a186219181c83d43bb3ea94c4772ff6ba525b637629e94d4a6b7b12b68231e",
+      "size": 83659
+    },
+    {
+      "path": "src-tauri/gen/schemas/capabilities.json",
+      "sha256": "df3da11498b5c3e515bb464c1c548e195e478b733eb2b8ca45f2e42d38e5b241",
+      "size": 904
+    },
+    {
+      "path": "src-tauri/gen/schemas/desktop-schema.json",
+      "sha256": "161dc16e4794020ce7fa18ba878aba7a0ab4e1954c3565d3cc308f1e32393789",
+      "size": 153240
+    },
+    {
+      "path": "src-tauri/gen/schemas/windows-schema.json",
+      "sha256": "161dc16e4794020ce7fa18ba878aba7a0ab4e1954c3565d3cc308f1e32393789",
+      "size": 153240
+    },
+    {
+      "path": "src-tauri/icons/icon.ico",
+      "sha256": "a22293fc2ee96d936bb2298aa93d3fe41173764073054c02fba3fa947c55328e",
+      "size": 71042
+    },
+    {
+      "path": "src-tauri/icons/icon.png",
+      "sha256": "1e9482df85bd30def5c122c3d8d21f3771868d231aa604fcc978c842f81d1516",
+      "size": 158029
+    },
+    {
+      "path": "src-tauri/permissions/stem-desktop-commands.toml",
+      "sha256": "ee67e318a422dfb47966a4045d326b4b81215248ec33f79c45cd85ecc85056b0",
+      "size": 1679
+    },
+    {
+      "path": "src-tauri/src/desktop_diagnostics.rs",
+      "sha256": "4255f5175a2a4a49b683ec62325e6caa195c3205869920c5059c3b5d8412508d",
+      "size": 8401
+    },
+    {
+      "path": "src-tauri/src/desktop_update.rs",
+      "sha256": "110a6a147e6af1d7ccbb79815790ef7267959d1c524e89df3c84049cd54db15b",
+      "size": 34969
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "sha256": "919a58ea58364adb720af3e8a40900d0782d74736d6b0a48185906e448c27bef",
+      "size": 97983
+    },
+    {
+      "path": "src-tauri/src/main.rs",
+      "sha256": "03802ea683d889f55016c302a83340707cdf723fe8bc7165c36e1edf80ff3127",
+      "size": 115
+    },
+    {
+      "path": "src-tauri/src/platform_taskbar.rs",
+      "sha256": "6c517452803c45abad5027d02e76f1a1205844a973879f11d6beb2fa68a26af3",
+      "size": 17713
+    },
+    {
+      "path": "src-tauri/tauri.conf.json",
+      "sha256": "df9179745ec9e4b75c5c37258bb2e10ea8b12ac17b68fdd79d6163dbbc08c1a2",
+      "size": 2356
+    },
+    {
+      "path": "src-tauri/tauri.microsoftstore.conf.json",
+      "sha256": "237e6459150af65d489d87c7326335bdb4e9d28a721248a8ce2192c46a84df34",
+      "size": 195
+    },
+    {
+      "path": "src-tauri/windows/LICENSE.txt",
+      "sha256": "31af5b15d84feeb006afbbc5e2bf3fddb41880fc75ce999242b3cee5de035c4e",
+      "size": 1107
+    },
+    {
+      "path": "src-tauri/windows/installer-hooks.nsh",
+      "sha256": "06d3a4e6c38ba08bbf790d283127db205b8b34ec012e3faaf6255742afac9775",
+      "size": 2764
+    },
+    {
+      "path": "src-tauri/windows/languages/English.nsh",
+      "sha256": "9558cb3afe70e022b8186addd1d9ce9358e3f8bce6819de066b79d8b90d8e290",
+      "size": 2772
+    },
+    {
+      "path": "src-tauri/windows/languages/Russian.nsh",
+      "sha256": "a52c0d260cffb8edc268bb9cfa61db546a80595c636b2f9938487b0ae0280434",
+      "size": 3621
+    },
+    {
+      "path": "src/main.ts",
+      "sha256": "41080c1f1d6adbce54b2beff59117e0b8e817ee04330a8ce1a7554e1b376eeae",
+      "size": 19846
+    },
+    {
+      "path": "src/mini-player.css",
+      "sha256": "e83ca913e4575ebba8152d02e52b0a441e623a5fba4b3969e639578321c0fb77",
+      "size": 5542
+    },
+    {
+      "path": "src/mini-player.ts",
+      "sha256": "60e4ce0263ec551085d37badcf4709f98e4b4482bf57ae309eae668dc51d29b1",
+      "size": 6976
+    },
+    {
+      "path": "src/styles.css",
+      "sha256": "10eebca411e799ef3c1a78f44dcbaec78074c2d9d873a6865dff25347fe4f0a9",
+      "size": 5503
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f11e5e263354dbe17468ddb9fd86335db6b96b84efea7375f0675d13f9a4ee34",
+      "size": 432
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "ddf2f1704ac6ce0ab99d15f9af8a084dfc7373824e8a0a3e7180c8e240618bf2",
+      "size": 444
+    }
+  ],
+  "schema": 1,
+  "source_revision": "3d2971eabb2c24fd19e0dbbd8b848429622bbc01",
+  "source_tag": "v0.1.32",
+  "tree_sha256": "407f285cdc6f40a8d28d39ab451bf070c5fec75a8f8415d66a90b64bbeb0e804"
+}

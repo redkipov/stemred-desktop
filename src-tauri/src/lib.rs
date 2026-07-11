@@ -17,10 +17,16 @@ use tauri::{
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
+mod desktop_diagnostics;
+mod desktop_update;
 mod platform_taskbar;
+
+use desktop_diagnostics::DesktopDiagnostics;
+use desktop_update::{
+    DesktopRuntimeReadiness, DesktopUpdateCoordinator, DesktopUpdateSafety, DesktopUpdateSnapshot,
+};
 
 const DEFAULT_REMOTE_URL: &str = "https://chat-stem.ru/messages";
 const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
@@ -30,10 +36,6 @@ const DESKTOP_NOTIFICATION_RECENT_LIMIT: usize = 128;
 const DESKTOP_MUSIC_FOLDERS_FILE: &str = "music-folders.json";
 const DESKTOP_MUSIC_MAX_FILES: usize = 600;
 const DESKTOP_MUSIC_MAX_DEPTH: usize = 4;
-#[cfg(windows)]
-const DESKTOP_AUTO_UPDATE_INITIAL_DELAY_SECS: u64 = 30;
-#[cfg(windows)]
-const DESKTOP_AUTO_UPDATE_INTERVAL_SECS: u64 = 6 * 60 * 60;
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 (() => {
@@ -789,7 +791,7 @@ struct DesktopMusicPlayerCommand {
     source: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ClientConfig {
     remote_url: String,
     web_build_id: String,
@@ -918,53 +920,52 @@ struct DesktopActivitySnapshot {
 #[tauri::command]
 async fn bootstrap(app: AppHandle) -> Result<BootstrapResult, String> {
     let current_shell_version = app.package_info().version.to_string();
+    if let Some(config) = load_cached_client_config(&app) {
+        let refresh_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Ok(config) = fetch_client_config().await {
+                let _ = persist_client_config(&refresh_app, &config);
+            }
+        });
+        return Ok(bootstrap_result(&current_shell_version, config, None));
+    }
 
     match fetch_client_config().await {
         Ok(config) => {
-            let state = update_state(
-                &current_shell_version,
-                &config.min_shell_version,
-                &config.recommended_shell_version,
-            );
+            persist_client_config(&app, &config)?;
+            Ok(bootstrap_result(&current_shell_version, config, None))
+        }
+        Err(error) => Ok(BootstrapResult {
+            state: "offline".to_string(),
+            remote_url: desktop_remote_url(DEFAULT_REMOTE_URL),
+            current_shell_version,
+            min_shell_version: "0.1.0".to_string(),
+            recommended_shell_version: "0.1.0".to_string(),
+            web_build_id: "unknown".to_string(),
+            api_build_id: "unknown".to_string(),
+            message: Some(error),
+        }),
+    }
+}
 
-            Ok(BootstrapResult {
-                state,
-                remote_url: desktop_remote_url(&config.remote_url),
-                current_shell_version,
-                min_shell_version: config.min_shell_version,
-                recommended_shell_version: config.recommended_shell_version,
-                web_build_id: config.web_build_id,
-                api_build_id: config.api_build_id,
-                message: None,
-            })
-        }
-        Err(error) => {
-            if remote_is_available(DEFAULT_REMOTE_URL).await {
-                Ok(BootstrapResult {
-                    state: "ready".to_string(),
-                    remote_url: desktop_remote_url(DEFAULT_REMOTE_URL),
-                    current_shell_version,
-                    min_shell_version: "0.1.0".to_string(),
-                    recommended_shell_version: "0.1.0".to_string(),
-                    web_build_id: "unknown".to_string(),
-                    api_build_id: "unknown".to_string(),
-                    message: Some(format!(
-                        "Config endpoint unavailable, opening default domain: {error}"
-                    )),
-                })
-            } else {
-                Ok(BootstrapResult {
-                    state: "offline".to_string(),
-                    remote_url: desktop_remote_url(DEFAULT_REMOTE_URL),
-                    current_shell_version,
-                    min_shell_version: "0.1.0".to_string(),
-                    recommended_shell_version: "0.1.0".to_string(),
-                    web_build_id: "unknown".to_string(),
-                    api_build_id: "unknown".to_string(),
-                    message: Some(error),
-                })
-            }
-        }
+fn bootstrap_result(
+    current_shell_version: &str,
+    config: ClientConfig,
+    message: Option<String>,
+) -> BootstrapResult {
+    BootstrapResult {
+        state: update_state(
+            current_shell_version,
+            &config.min_shell_version,
+            &config.recommended_shell_version,
+        ),
+        remote_url: desktop_remote_url(&config.remote_url),
+        current_shell_version: current_shell_version.to_string(),
+        min_shell_version: config.min_shell_version,
+        recommended_shell_version: config.recommended_shell_version,
+        web_build_id: config.web_build_id,
+        api_build_id: config.api_build_id,
+        message,
     }
 }
 
@@ -1137,71 +1138,134 @@ fn close_desktop_window_to_tray(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_desktop_shell_update(app: AppHandle) -> Result<DesktopShellUpdateStatus, String> {
-    let current_version = app.package_info().version.to_string();
-    let update = app
-        .updater()
-        .map_err(|error| error.to_string())?
-        .check()
-        .await
-        .map_err(|error| error.to_string())?;
+fn desktop_update_snapshot(
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+) -> DesktopUpdateSnapshot {
+    state.snapshot()
+}
 
-    Ok(match update {
-        Some(update) => DesktopShellUpdateStatus {
-            available: true,
-            current_version: update.current_version,
-            version: Some(update.version),
-        },
-        None => DesktopShellUpdateStatus {
-            available: false,
-            current_version,
-            version: None,
-        },
+#[tauri::command]
+async fn desktop_update_request_check(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+    force: bool,
+) -> Result<DesktopUpdateSnapshot, String> {
+    desktop_update::request_check(&app, &state, force).await
+}
+
+#[tauri::command]
+fn desktop_update_set_safety(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+    safety: DesktopUpdateSafety,
+) -> DesktopUpdateSnapshot {
+    let snapshot = state.set_safety(safety);
+    let _ = app.emit("stem://desktop-update-state", snapshot.clone());
+    snapshot
+}
+
+#[tauri::command]
+fn desktop_update_apply(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+    user_initiated: bool,
+) -> Result<DesktopUpdateSnapshot, String> {
+    desktop_update::apply_update(&app, &state, user_initiated)
+}
+
+#[tauri::command]
+fn desktop_runtime_ready(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+    readiness: DesktopRuntimeReadiness,
+) -> Result<DesktopUpdateSnapshot, String> {
+    let snapshot = state.runtime_ready(&app, &readiness)?;
+    let _ = app.emit("stem://desktop-update-state", snapshot.clone());
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn desktop_runtime_heartbeat(state: tauri::State<'_, DesktopUpdateCoordinator>, visible: bool) {
+    state.heartbeat(visible);
+}
+
+#[tauri::command]
+fn export_desktop_diagnostics(
+    state: tauri::State<'_, DesktopDiagnostics>,
+    include_dump: bool,
+) -> Result<String, String> {
+    state.export(include_dump)
+}
+
+#[tauri::command]
+async fn check_desktop_shell_update(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+) -> Result<DesktopShellUpdateStatus, String> {
+    let snapshot = desktop_update::request_check(&app, &state, true).await?;
+    Ok(DesktopShellUpdateStatus {
+        available: snapshot.target_version.is_some(),
+        current_version: snapshot.current_version,
+        version: snapshot.target_version,
     })
 }
 
 #[tauri::command]
-async fn install_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
-    install_available_desktop_shell_update(app).await
-}
-
-async fn install_available_desktop_shell_update(app: AppHandle) -> Result<bool, String> {
-    let update = app
-        .updater()
-        .map_err(|error| error.to_string())?
-        .check()
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let Some(update) = update else {
+async fn install_desktop_shell_update(
+    app: AppHandle,
+    state: tauri::State<'_, DesktopUpdateCoordinator>,
+) -> Result<bool, String> {
+    let snapshot = desktop_update::request_check(&app, &state, true).await?;
+    if !snapshot.install_ready {
         return Ok(false);
-    };
-
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|error| error.to_string())?;
-    app.restart()
+    }
+    desktop_update::apply_update(&app, &state, true)?;
+    Ok(true)
 }
 
-#[cfg(windows)]
-fn spawn_desktop_auto_update(app: AppHandle) {
-    if cfg!(debug_assertions) {
-        return;
-    }
-
+fn spawn_desktop_update_scheduler(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(DESKTOP_AUTO_UPDATE_INITIAL_DELAY_SECS)).await;
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        let mut initial_check_pending = true;
 
         loop {
-            if install_available_desktop_shell_update(app.clone())
-                .await
-                .unwrap_or(false)
-            {
-                break;
+            if let Some(state) = app.try_state::<DesktopUpdateCoordinator>() {
+                let should_check =
+                    state.check_due() || (initial_check_pending && state.cached_runtime_ready());
+                if should_check {
+                    initial_check_pending = false;
+                    let _ = desktop_update::request_check(&app, &state, true).await;
+                }
+
+                let idle_seconds = platform_activity::snapshot()
+                    .map(|snapshot| snapshot.idle_seconds)
+                    .unwrap_or(0);
+                let window_hidden = app
+                    .get_webview_window("main")
+                    .and_then(|window| window.is_visible().ok())
+                    .map(|visible| !visible)
+                    .unwrap_or(true);
+                if state.should_auto_install(idle_seconds, window_hidden) {
+                    let _ = desktop_update::apply_update(&app, &state, false);
+                }
+                if !window_hidden && state.heartbeat_overdue() {
+                    if let Some(diagnostics) = app.try_state::<DesktopDiagnostics>() {
+                        if diagnostics.capture_hang_dump().is_ok() {
+                            desktop_update::telemetry_event(
+                                &app,
+                                &state,
+                                "hang",
+                                "failed",
+                                Some("heartbeat_lost"),
+                                30_000,
+                            );
+                            state.mark_hang_dump_captured();
+                        }
+                    }
+                }
             }
 
-            tokio::time::sleep(Duration::from_secs(DESKTOP_AUTO_UPDATE_INTERVAL_SECS)).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
 }
@@ -1605,7 +1669,7 @@ fn scan_music_directory(app: AppHandle, path: String) -> Result<DesktopMusicScan
     let mut tracks = Vec::new();
     let mut truncated = false;
     collect_desktop_music_tracks(&path, &path, 0, &mut tracks, &mut truncated)?;
-    tracks.sort_by(|left, right| left.title.to_lowercase().cmp(&right.title.to_lowercase()));
+    tracks.sort_by_key(|track| track.title.to_lowercase());
 
     Ok(DesktopMusicScanResult {
         folder: desktop_music_directory(&path),
@@ -1993,7 +2057,7 @@ fn unique_download_path(directory: &Path, filename: &str) -> PathBuf {
 async fn fetch_client_config() -> Result<ClientConfig, String> {
     let config_url = option_env!("STEM_CLIENT_CONFIG_URL").unwrap_or(DEFAULT_CONFIG_URL);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(2))
         .build()
         .map_err(|error| error.to_string())?;
 
@@ -2016,20 +2080,32 @@ async fn fetch_client_config() -> Result<ClientConfig, String> {
         .map_err(|error| format!("Не удалось прочитать конфигурацию: {error}"))
 }
 
-async fn remote_is_available(url: &str) -> bool {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-    else {
-        return false;
-    };
+fn client_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("client-config.json"))
+        .map_err(|error| error.to_string())
+}
 
-    client
-        .get(url)
-        .send()
-        .await
-        .map(|response| response.status().is_success() || response.status().is_redirection())
-        .unwrap_or(false)
+fn load_cached_client_config(app: &AppHandle) -> Option<ClientConfig> {
+    let path = client_config_path(app).ok()?;
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+fn persist_client_config(app: &AppHandle, config: &ClientConfig) -> Result<(), String> {
+    let path = client_config_path(app)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "client config path is unavailable".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+    serde_json::to_writer(&mut temporary, config).map_err(|error| error.to_string())?;
+    temporary.flush().map_err(|error| error.to_string())?;
+    temporary.persist(path).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn update_state(current: &str, min_shell: &str, recommended_shell: &str) -> String {
@@ -2141,7 +2217,7 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
         .shadow(true)
         .disable_drag_drop_handler()
         .initialization_script("document.documentElement.classList.add('stem-desktop-frameless');")
-        .on_navigation(|url| is_allowed_navigation_url(url))
+        .on_navigation(is_allowed_navigation_url)
         .build()
 }
 
@@ -2405,7 +2481,7 @@ fn handle_deep_link(app: &AppHandle, raw: &str) {
 
     if let Some(window) = app.get_webview_window("main") {
         let escaped = serde_json::to_string(&target).unwrap_or_else(|_| "\"/\"".to_string());
-        let _ = window.eval(&format!("window.location.replace({escaped})"));
+        let _ = window.eval(format!("window.location.replace({escaped})"));
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -2482,7 +2558,7 @@ mod platform_activity {
         }
 
         let path = String::from_utf16_lossy(&buffer[..size as usize]);
-        path.rsplit(|ch| ch == '\\' || ch == '/')
+        path.rsplit(['\\', '/'])
             .next()
             .map(|name| name.to_ascii_lowercase())
     }
@@ -2696,6 +2772,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(DesktopState::default())
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            show_main_window(app);
             if let Some(raw) = capture_argv_deep_link(&argv) {
                 if let Some(state) = app.try_state::<DesktopState>() {
                     if let Ok(mut pending) = state.pending_deep_link.lock() {
@@ -2709,7 +2786,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             bootstrap,
@@ -2731,6 +2807,13 @@ pub fn run() {
             close_desktop_window_to_tray,
             check_desktop_shell_update,
             install_desktop_shell_update,
+            desktop_update_snapshot,
+            desktop_update_request_check,
+            desktop_update_set_safety,
+            desktop_update_apply,
+            desktop_runtime_ready,
+            desktop_runtime_heartbeat,
+            export_desktop_diagnostics,
             ensure_desktop_notification_permission,
             show_desktop_notification,
             save_file_to_downloads_stem,
@@ -2772,13 +2855,18 @@ pub fn run() {
         })
         .setup(|app| {
             let app_handle = app.handle().clone();
+            let diagnostics =
+                DesktopDiagnostics::load(&app_handle).map_err(std::io::Error::other)?;
+            app.manage(diagnostics);
+            let update_coordinator =
+                DesktopUpdateCoordinator::load(&app_handle).map_err(std::io::Error::other)?;
+            app.manage(update_coordinator);
             let _ = platform_autostart::ensure_default_enabled_once(&app_handle);
 
             let main_window = create_main_window(app)?;
             platform_taskbar::install(&app_handle, &main_window);
             create_tray(app)?;
-            #[cfg(windows)]
-            spawn_desktop_auto_update(app_handle.clone());
+            spawn_desktop_update_scheduler(app_handle.clone());
 
             #[cfg(any(windows, target_os = "linux"))]
             {

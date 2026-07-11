@@ -344,7 +344,7 @@ mod windows_taskbar {
     }
 
     fn icon_bits(icon: TaskbarIcon) -> (Vec<u8>, Vec<u8>) {
-        let stride = ((TASKBAR_ICON_SIZE + 15) / 16) * 2;
+        let stride = TASKBAR_ICON_SIZE.div_ceil(16) * 2;
         let mut and_bits = vec![0xffu8; stride * TASKBAR_ICON_SIZE];
         let mut xor_bits = vec![0u8; TASKBAR_ICON_SIZE * TASKBAR_ICON_SIZE * 4];
         for y in 0..TASKBAR_ICON_SIZE {

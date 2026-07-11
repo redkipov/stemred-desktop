@@ -1,6 +1,6 @@
 {
   "name": "stemred-desktop",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "private": false,
   "license": "MIT",
   "homepage": "https://chat-stem.ru/",
@@ -25,9 +25,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.0",
-    "@tauri-apps/plugin-deep-link": "2.4.9",
-    "@tauri-apps/plugin-process": "2.3.1",
-    "@tauri-apps/plugin-updater": "2.10.1"
+    "@tauri-apps/plugin-deep-link": "2.4.9"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.2",

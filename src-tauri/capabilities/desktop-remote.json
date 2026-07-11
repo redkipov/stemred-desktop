@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-remote",
+  "description": "Narrow native bridge for the trusted StemRed origin.",
+  "windows": ["main", "music-mini"],
+  "remote": {
+    "urls": ["https://chat-stem.ru", "https://chat-stem.ru/*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "allow-stem-desktop-commands",
+    "notification:default"
+  ]
+}

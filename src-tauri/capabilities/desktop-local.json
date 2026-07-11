@@ -1,12 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "desktop",
-  "description": "Desktop shell capability for local fallback and trusted STEM web origin.",
+  "identifier": "desktop-local",
+  "description": "Bundled recovery shell permissions.",
   "windows": ["main", "music-mini"],
   "local": true,
-  "remote": {
-    "urls": ["https://chat-stem.ru", "https://chat-stem.ru/*"]
-  },
   "permissions": [
     "core:default",
     "core:window:allow-hide",
@@ -16,10 +13,6 @@
     "core:window:allow-toggle-maximize",
     "allow-stem-desktop-commands",
     "deep-link:default",
-    "notification:default",
-    "opener:default",
-    "opener:allow-open-path",
-    "process:allow-restart",
-    "updater:default"
+    "notification:default"
   ]
 }

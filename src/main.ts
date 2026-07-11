@@ -3,8 +3,6 @@ import './styles.css';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
-import { relaunch } from '@tauri-apps/plugin-process';
-import { check } from '@tauri-apps/plugin-updater';
 
 declare const __APP_VERSION__: string;
 
@@ -19,6 +17,15 @@ type BootstrapResult = {
   web_build_id: string;
   api_build_id: string;
   message?: string;
+};
+
+type DesktopUpdateSnapshot = {
+  phase: string;
+  current_version: string;
+  target_version?: string;
+  install_ready: boolean;
+  mandatory: boolean;
+  error_code?: string;
 };
 
 type ShellLocale = 'en' | 'ru' | 'es' | 'ar' | 'fr';
@@ -191,6 +198,9 @@ const progressEl = document.querySelector<HTMLDivElement>('#progress')!;
 const retryButton = document.querySelector<HTMLButtonElement>('#retry')!;
 const openButton = document.querySelector<HTMLButtonElement>('#open')!;
 const updateButton = document.querySelector<HTMLButtonElement>('#update')!;
+const safeButton = document.querySelector<HTMLButtonElement>('#safe')!;
+const disableIntegrationButton = document.querySelector<HTMLButtonElement>('#disable-integration')!;
+const exportDiagnosticsButton = document.querySelector<HTMLButtonElement>('#export-diagnostics')!;
 const minimizeButton = document.querySelector<HTMLButtonElement>('#window-minimize')!;
 const maximizeButton = document.querySelector<HTMLButtonElement>('#window-maximize')!;
 const closeButton = document.querySelector<HTMLButtonElement>('#window-close')!;
@@ -199,8 +209,6 @@ const windowControls = document.querySelector<HTMLElement>('.window-controls')!;
 const WINDOW_CONTROLS_HIDE_DELAY_MS = 1000;
 const WINDOW_CONTROLS_REVEAL_WIDTH = 190;
 const WINDOW_CONTROLS_REVEAL_HEIGHT = 110;
-const STARTUP_UPDATE_FAILURE_KEY = 'stemred_startup_update_failure_v1';
-const STARTUP_UPDATE_FAILURE_SUPPRESS_MS = 30 * 60 * 1000;
 const FALLBACK_REMOTE_URL = 'https://chat-stem.ru/messages';
 const SHELL_APP_VERSION = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : 'unknown';
 const LOADING_WORDS = [
@@ -292,87 +300,41 @@ function setBusy(isBusy: boolean) {
   retryButton.disabled = isBusy;
   openButton.disabled = isBusy;
   updateButton.disabled = isBusy;
+  safeButton.disabled = isBusy;
+  disableIntegrationButton.disabled = isBusy;
+  exportDiagnosticsButton.disabled = isBusy;
 }
 
-function setButtons(...visible: Array<'retry' | 'open' | 'update'>) {
+function setButtons(
+  ...visible: Array<'retry' | 'open' | 'update' | 'safe' | 'disable' | 'export'>
+) {
   retryButton.hidden = !visible.includes('retry');
   openButton.hidden = !visible.includes('open');
   updateButton.hidden = !visible.includes('update');
-}
-
-function startupUpdateRecentlyFailed(version: string): boolean {
-  try {
-    const raw = localStorage.getItem(STARTUP_UPDATE_FAILURE_KEY);
-    if (!raw) return false;
-    const failure = JSON.parse(raw) as { version?: string; failedAt?: number };
-    return (
-      failure.version === version &&
-      typeof failure.failedAt === 'number' &&
-      Date.now() - failure.failedAt < STARTUP_UPDATE_FAILURE_SUPPRESS_MS
-    );
-  } catch {
-    return false;
-  }
-}
-
-function rememberStartupUpdateFailure(version: string) {
-  try {
-    localStorage.setItem(
-      STARTUP_UPDATE_FAILURE_KEY,
-      JSON.stringify({ version, failedAt: Date.now() }),
-    );
-  } catch {
-    // Не блокируем запуск из-за недоступного localStorage.
-  }
-}
-
-function clearStartupUpdateFailure() {
-  try {
-    localStorage.removeItem(STARTUP_UPDATE_FAILURE_KEY);
-  } catch {
-    // Не блокируем запуск из-за недоступного localStorage.
-  }
+  safeButton.hidden = !visible.includes('safe');
+  disableIntegrationButton.hidden = !visible.includes('disable');
+  exportDiagnosticsButton.hidden = !visible.includes('export');
 }
 
 async function installStartupUpdateIfAvailable(result: BootstrapResult): Promise<boolean> {
-  if (!['ready', 'update_available', 'update_required'].includes(result.state)) return false;
-  titleEl.textContent = 'StemRED';
-  setShellVersion(result.current_shell_version);
-
-  let update: Awaited<ReturnType<typeof check>> | null = null;
   try {
-    update = await check();
-  } catch (error) {
-    if (result.state !== 'update_required') return false;
-    setButtons('retry', 'update');
-    return true;
+    const snapshot = await invoke<DesktopUpdateSnapshot>('desktop_update_snapshot');
+    if (snapshot.phase === 'quarantined') {
+      setButtons('safe', 'disable', 'export', 'retry');
+      return true;
+    }
+    if (result.state === 'update_required' || snapshot.mandatory) {
+      setButtons('update', 'retry');
+      return true;
+    }
+  } catch {
+    if (result.state === 'update_required') {
+      setButtons('update', 'retry');
+      return true;
+    }
   }
 
-  if (!update) return false;
-
-  const version = String(update.version || 'unknown');
-  if (startupUpdateRecentlyFailed(version)) return false;
-  setShellVersion(result.current_shell_version);
-
-  try {
-    await update.downloadAndInstall((event) => {
-      if (event.event === 'Started') {
-        setShellVersion(result.current_shell_version);
-      } else if (event.event === 'Progress') {
-        setShellVersion(result.current_shell_version);
-      } else if (event.event === 'Finished') {
-        setShellVersion(result.current_shell_version);
-      }
-    });
-
-    clearStartupUpdateFailure();
-    await relaunch();
-    return true;
-  } catch (error) {
-    rememberStartupUpdateFailure(version);
-    setButtons(result.state === 'update_required' ? 'retry' : 'open', 'retry', 'update');
-    return true;
-  }
+  return false;
 }
 
 function isPointerNearWindowControls() {
@@ -489,11 +451,11 @@ async function bootstrap() {
       return;
     }
 
-    await navigateToRemote(result);
+    setButtons('safe', 'disable', 'export', 'retry');
   } catch (error) {
     latestBootstrap = null;
     setShellVersion();
-    navigateToRemoteUrl(FALLBACK_REMOTE_URL);
+    setButtons('safe', 'disable', 'export', 'retry');
   } finally {
     setBusy(false);
   }
@@ -506,24 +468,16 @@ async function installUpdate() {
   setShellVersion(latestBootstrap?.current_shell_version || SHELL_APP_VERSION);
 
   try {
-    const update = await check();
-    if (!update) {
+    const snapshot = await invoke<DesktopUpdateSnapshot>('desktop_update_request_check', {
+      force: true,
+    });
+    if (!snapshot.install_ready) {
       setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry');
       return;
     }
-
-    await update.downloadAndInstall((event) => {
-      if (event.event === 'Started') {
-        setShellVersion(SHELL_APP_VERSION);
-      } else if (event.event === 'Progress') {
-        setShellVersion(SHELL_APP_VERSION);
-      } else if (event.event === 'Finished') {
-        setShellVersion(SHELL_APP_VERSION);
-      }
+    await invoke('desktop_update_apply', {
+      userInitiated: true,
     });
-
-    clearStartupUpdateFailure();
-    await relaunch();
   } catch (error) {
     setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry', 'update');
   } finally {
@@ -536,6 +490,19 @@ openButton.addEventListener('click', () => {
   if (latestBootstrap) void navigateToRemote(latestBootstrap);
 });
 updateButton.addEventListener('click', () => void installUpdate());
+safeButton.addEventListener('click', () => {
+  navigateToRemoteUrl(`${FALLBACK_REMOTE_URL}?stem-recovery=lkg`);
+});
+disableIntegrationButton.addEventListener('click', () => {
+  void invoke('set_microphone_access_enabled', { enabled: false }).then(() => {
+    detailsEl.textContent = 'Микрофон отключён';
+  });
+});
+exportDiagnosticsButton.addEventListener('click', () => {
+  void invoke<string>('export_desktop_diagnostics', { includeDump: false }).then((path) => {
+    detailsEl.textContent = path;
+  });
+});
 minimizeButton.addEventListener('click', (event) => {
   event.stopPropagation();
   void invoke('minimize_desktop_window');
