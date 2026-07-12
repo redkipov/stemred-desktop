@@ -13,6 +13,8 @@ const files = {
     'utf8',
   ),
   lib: readFileSync(resolve(root, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
+  miniPlayer: readFileSync(resolve(root, 'src', 'mini-player.ts'), 'utf8'),
+  miniPlayerHtml: readFileSync(resolve(root, 'mini-player.html'), 'utf8'),
   permissions: readFileSync(
     resolve(root, 'src-tauri', 'permissions', 'stem-desktop-commands.toml'),
     'utf8',
@@ -20,8 +22,14 @@ const files = {
 };
 
 const requiredCommands = [
+  'get_desktop_music_runtime_capabilities',
   'pick_music_directory',
   'scan_music_directory',
+  'cancel_music_directory_scan',
+  'read_music_artwork',
+  'open_music_range_source',
+  'close_music_range_source',
+  'revoke_music_directory',
   'read_music_file',
 ];
 
@@ -36,10 +44,28 @@ const requiredFileTransferCommands = [
 
 const checks = [
   ['Cargo.toml', files.cargo, 'tauri-plugin-dialog'],
+  ['Cargo.toml', files.cargo, 'lofty = "0.24"'],
   ['lib.rs', files.lib, 'use tauri_plugin_dialog::DialogExt;'],
   ['lib.rs', files.lib, 'tauri_plugin_dialog::init()'],
   ['lib.rs', files.lib, 'DESKTOP_MUSIC_FOLDERS_FILE'],
   ['lib.rs', files.lib, 'DesktopMusicDirectory'],
+  ['lib.rs', files.lib, 'music_range_source_v1: true'],
+  ['lib.rs', files.lib, 'register_asynchronous_uri_scheme_protocol'],
+  ['lib.rs', files.lib, '.use_https_scheme(true)'],
+  ['lib.rs', files.lib, 'DESKTOP_MUSIC_RANGE_MAX_BYTES'],
+  ['lib.rs', files.lib, 'DESKTOP_MUSIC_LEGACY_MAX_BYTES'],
+  ['lib.rs', files.lib, 'desktop_shell_update_required'],
+  ['lib.rs', files.lib, 'music_metadata_v2: true'],
+  ['lib.rs', files.lib, 'music_artwork_v1: true'],
+  ['lib.rs', files.lib, 'cancellable_music_scan_v1: true'],
+  ['lib.rs', files.lib, 'read_cover_art(false)'],
+  ['lib.rs', files.lib, 'stem://music-scan-progress'],
+  ['lib.rs', files.lib, 'muted: bool'],
+  ['lib.rs', files.lib, 'volume: f64'],
+  ['mini player', files.miniPlayer, "command: 'toggleMute'"],
+  ['mini player', files.miniPlayer, "command: 'setVolume'"],
+  ['mini player HTML', files.miniPlayerHtml, 'id="mini-mute"'],
+  ['mini player HTML', files.miniPlayerHtml, 'id="mini-volume"'],
   ['ACL schema', files.aclSchema, '"dialog"'],
   ['desktop schema', files.desktopSchema, 'dialog:default'],
   ...requiredCommands.map((command) => ['lib.rs', files.lib, `fn ${command}`]),

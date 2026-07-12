@@ -44,7 +44,13 @@ commands.allow = [
   "cancel_file_read_from_downloads_stemred",
   "desktop_path_exists",
   "open_downloaded_file",
+  "get_desktop_music_runtime_capabilities",
   "pick_music_directory",
   "scan_music_directory",
+  "cancel_music_directory_scan",
+  "read_music_artwork",
+  "open_music_range_source",
+  "close_music_range_source",
+  "revoke_music_directory",
   "read_music_file",
 ]

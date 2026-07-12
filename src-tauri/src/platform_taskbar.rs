@@ -197,6 +197,7 @@ mod windows_taskbar {
         Some(DesktopMusicPlayerCommand {
             command: command.to_string(),
             position_sec: None,
+            volume: None,
             source: Some("taskbar".to_string()),
         })
     }

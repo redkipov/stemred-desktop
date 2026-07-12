@@ -1,6 +1,6 @@
 {
   "name": "stemred-desktop",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "private": false,
   "license": "MIT",
   "homepage": "https://chat-stem.ru/",
@@ -15,7 +15,7 @@
     "build": "npm run build:win",
     "build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1",
     "build:store": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -MicrosoftStore",
-    "release:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -BumpPatch",
+    "release:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -BumpPatch -AllowUnsigned",
     "release:store": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-windows.ps1 -MicrosoftStore -BumpPatch",
     "build:tauri": "tauri build",
     "build:web": "tsc --noEmit && vite build",

@@ -2,12 +2,19 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose, Engine as _};
+use lofty::config::ParseOptions;
+use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::picture::PictureType;
+use lofty::probe::Probe;
+use lofty::tag::{Accessor, ItemKey, Tag};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use tauri::http::{header, Method, Request, Response, StatusCode};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
 use tauri::plugin::PermissionState;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -18,6 +25,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
+use uuid::Uuid;
 
 mod desktop_diagnostics;
 mod desktop_update;
@@ -36,6 +44,14 @@ const DESKTOP_NOTIFICATION_RECENT_LIMIT: usize = 128;
 const DESKTOP_MUSIC_FOLDERS_FILE: &str = "music-folders.json";
 const DESKTOP_MUSIC_MAX_FILES: usize = 600;
 const DESKTOP_MUSIC_MAX_DEPTH: usize = 4;
+const DESKTOP_MUSIC_SCAN_PROGRESS_STEP: usize = 32;
+const DESKTOP_MUSIC_RANGE_PROTOCOL: &str = "stem-music";
+const DESKTOP_MUSIC_RANGE_MAX_BYTES: u64 = 1024 * 1024;
+const DESKTOP_MUSIC_RANGE_MAX_SOURCES: usize = 32;
+const DESKTOP_MUSIC_LEGACY_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const DESKTOP_MUSIC_ARTWORK_MAX_BYTES: usize = 2 * 1024 * 1024;
+const DESKTOP_MUSIC_SCAN_CANCELLED: &str = "music_scan_cancelled";
+const DESKTOP_SHELL_UPDATE_REQUIRED: &str = "desktop_shell_update_required";
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 (() => {
@@ -725,6 +741,9 @@ struct DesktopState {
     pending_downloads: Mutex<HashMap<String, DesktopPendingDownload>>,
     pending_file_reads: Mutex<HashMap<String, DesktopPendingFileRead>>,
     music_player_state: Mutex<DesktopMusicPlayerState>,
+    music_range_sources: Mutex<HashMap<String, DesktopMusicRangeSourceEntry>>,
+    music_scan_active: Arc<AtomicU64>,
+    music_scan_sequence: AtomicU64,
 }
 
 impl Default for DesktopState {
@@ -737,6 +756,9 @@ impl Default for DesktopState {
             pending_downloads: Mutex::new(HashMap::new()),
             pending_file_reads: Mutex::new(HashMap::new()),
             music_player_state: Mutex::new(DesktopMusicPlayerState::default()),
+            music_range_sources: Mutex::new(HashMap::new()),
+            music_scan_active: Arc::new(AtomicU64::new(0)),
+            music_scan_sequence: AtomicU64::new(0),
         }
     }
 }
@@ -752,12 +774,16 @@ struct DesktopMusicPlayerState {
     duration_sec: f64,
     failed: bool,
     favorite: bool,
+    #[serde(default)]
+    muted: bool,
     pinned: bool,
     playing: bool,
     position_sec: f64,
     source_label: String,
     title: String,
     track_key: Option<String>,
+    #[serde(default = "default_music_volume")]
+    volume: f64,
 }
 
 impl Default for DesktopMusicPlayerState {
@@ -771,12 +797,14 @@ impl Default for DesktopMusicPlayerState {
             duration_sec: 0.0,
             failed: false,
             favorite: false,
+            muted: false,
             pinned: false,
             playing: false,
             position_sec: 0.0,
             source_label: "StemRed Music".to_string(),
             title: "StemRed Music".to_string(),
             track_key: None,
+            volume: default_music_volume(),
         }
     }
 }
@@ -787,6 +815,8 @@ struct DesktopMusicPlayerCommand {
     command: String,
     #[serde(default)]
     position_sec: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    volume: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<String>,
 }
@@ -888,6 +918,34 @@ struct DesktopMusicTrack {
     mime: String,
     size: u64,
     modified_ms: u64,
+    metadata: DesktopMusicMetadataV2,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicMetadataV2 {
+    version: u8,
+    title: String,
+    artist: Option<String>,
+    album: Option<String>,
+    album_artist: Option<String>,
+    duration_ms: u64,
+    year: Option<u16>,
+    genre: Option<String>,
+    track_number: Option<u32>,
+    track_total: Option<u32>,
+    disc_number: Option<u32>,
+    disc_total: Option<u32>,
+    replay_gain: Option<DesktopMusicReplayGain>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicReplayGain {
+    album_gain_db: Option<f64>,
+    album_peak: Option<f64>,
+    track_gain_db: Option<f64>,
+    track_peak: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -895,6 +953,17 @@ struct DesktopMusicScanResult {
     folder: DesktopMusicDirectory,
     tracks: Vec<DesktopMusicTrack>,
     truncated: bool,
+    generation: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicScanProgress {
+    generation: u64,
+    scanned: usize,
+    truncated: bool,
+    done: bool,
+    cancelled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -904,6 +973,53 @@ struct DesktopMusicFile {
     size: u64,
     modified_ms: u64,
     content_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicArtwork {
+    mime: String,
+    size: u64,
+    content_base64: String,
+}
+
+#[derive(Debug, Clone)]
+struct DesktopMusicRangeSourceEntry {
+    path: PathBuf,
+    mime: String,
+    size: u64,
+    modified_ms: u64,
+    revoked: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicRangeSource {
+    source_id: String,
+    url: String,
+    filename: String,
+    mime: String,
+    size: u64,
+    modified_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopMusicRuntimeCapabilities {
+    music_range_source_v1: bool,
+    music_metadata_v2: bool,
+    music_artwork_v1: bool,
+    cancellable_music_scan_v1: bool,
+    max_range_bytes: u64,
+    max_legacy_file_bytes: u64,
+    max_artwork_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DesktopMusicByteRange {
+    start: u64,
+    end: u64,
+    status: StatusCode,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1649,6 +1765,19 @@ fn open_downloaded_file(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_desktop_music_runtime_capabilities() -> DesktopMusicRuntimeCapabilities {
+    DesktopMusicRuntimeCapabilities {
+        music_range_source_v1: true,
+        music_metadata_v2: true,
+        music_artwork_v1: true,
+        cancellable_music_scan_v1: true,
+        max_range_bytes: DESKTOP_MUSIC_RANGE_MAX_BYTES,
+        max_legacy_file_bytes: DESKTOP_MUSIC_LEGACY_MAX_BYTES,
+        max_artwork_bytes: DESKTOP_MUSIC_ARTWORK_MAX_BYTES as u64,
+    }
+}
+
+#[tauri::command]
 fn pick_music_directory(app: AppHandle) -> Result<Option<DesktopMusicDirectory>, String> {
     let Some(path) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
@@ -1662,20 +1791,233 @@ fn pick_music_directory(app: AppHandle) -> Result<Option<DesktopMusicDirectory>,
 }
 
 #[tauri::command]
-fn scan_music_directory(app: AppHandle, path: String) -> Result<DesktopMusicScanResult, String> {
-    let path = canonicalize_existing_dir(Path::new(path.trim()))?;
-    ensure_music_directory_allowed(&app, &path)?;
+async fn scan_music_directory(
+    app: AppHandle,
+    desktop_state: tauri::State<'_, DesktopState>,
+    path: String,
+    generation: Option<u64>,
+) -> Result<DesktopMusicScanResult, String> {
+    let generation = generation.filter(|value| *value > 0).unwrap_or_else(|| {
+        desktop_state
+            .music_scan_sequence
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
+            .max(1)
+    });
+    let scan_active = Arc::clone(&desktop_state.music_scan_active);
+    scan_active.store(generation, Ordering::Release);
+    let worker_active = Arc::clone(&scan_active);
 
-    let mut tracks = Vec::new();
-    let mut truncated = false;
-    collect_desktop_music_tracks(&path, &path, 0, &mut tracks, &mut truncated)?;
-    tracks.sort_by_key(|track| track.title.to_lowercase());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        ensure_music_scan_active(&worker_active, generation)?;
+        let path = canonicalize_existing_dir(Path::new(path.trim()))?;
+        ensure_music_directory_allowed(&app, &path)?;
 
-    Ok(DesktopMusicScanResult {
-        folder: desktop_music_directory(&path),
-        tracks,
-        truncated,
+        let mut tracks = Vec::new();
+        let mut truncated = false;
+        emit_desktop_music_scan_progress(&app, generation, 0, false, false, false);
+        let scan_context = DesktopMusicScanContext {
+            app: &app,
+            generation,
+            root: &path,
+            scan_active: &worker_active,
+        };
+        let scan_result =
+            collect_desktop_music_tracks(&scan_context, &path, 0, &mut tracks, &mut truncated);
+        if let Err(error) = scan_result {
+            emit_desktop_music_scan_progress(
+                &app,
+                generation,
+                tracks.len(),
+                truncated,
+                true,
+                error == DESKTOP_MUSIC_SCAN_CANCELLED,
+            );
+            return Err(error);
+        }
+        tracks.sort_by_key(|track| track.title.to_lowercase());
+        emit_desktop_music_scan_progress(&app, generation, tracks.len(), truncated, true, false);
+
+        Ok(DesktopMusicScanResult {
+            folder: desktop_music_directory(&path),
+            tracks,
+            truncated,
+            generation,
+        })
     })
+    .await
+    .map_err(|_| "music_scan_unavailable".to_string())?;
+
+    let _ = scan_active.compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire);
+    result
+}
+
+#[tauri::command]
+fn cancel_music_directory_scan(
+    desktop_state: tauri::State<'_, DesktopState>,
+    generation: u64,
+) -> bool {
+    generation > 0
+        && desktop_state
+            .music_scan_active
+            .compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+}
+
+#[tauri::command]
+async fn read_music_artwork(
+    app: AppHandle,
+    path: String,
+) -> Result<Option<DesktopMusicArtwork>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = fs::canonicalize(Path::new(path.trim()))
+            .map_err(|_| "music_artwork_unavailable".to_string())?;
+        ensure_music_file_allowed(&app, &path)
+            .map_err(|_| "music_artwork_unavailable".to_string())?;
+        if !is_desktop_music_file(&path) {
+            return Err("music_artwork_unavailable".to_string());
+        }
+
+        let tagged_file = Probe::open(&path)
+            .map_err(|_| "music_artwork_unavailable".to_string())?
+            .options(ParseOptions::new().read_properties(false))
+            .read()
+            .map_err(|_| "music_artwork_unavailable".to_string())?;
+        let picture = tagged_file
+            .tags()
+            .iter()
+            .flat_map(|tag| tag.pictures())
+            .find(|picture| picture.pic_type() == PictureType::CoverFront)
+            .or_else(|| {
+                tagged_file
+                    .tags()
+                    .iter()
+                    .flat_map(|tag| tag.pictures())
+                    .next()
+            });
+        let Some(picture) = picture else {
+            return Ok(None);
+        };
+        let data = picture.data();
+        if data.is_empty() {
+            return Ok(None);
+        }
+        if data.len() > DESKTOP_MUSIC_ARTWORK_MAX_BYTES {
+            return Err("music_artwork_too_large".to_string());
+        }
+
+        Ok(Some(DesktopMusicArtwork {
+            mime: picture
+                .mime_type()
+                .map(|value| value.as_str().to_string())
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
+            size: data.len() as u64,
+            content_base64: general_purpose::STANDARD.encode(data),
+        }))
+    })
+    .await
+    .map_err(|_| "music_artwork_unavailable".to_string())?
+}
+
+#[tauri::command]
+fn open_music_range_source(
+    app: AppHandle,
+    desktop_state: tauri::State<'_, DesktopState>,
+    path: String,
+) -> Result<DesktopMusicRangeSource, String> {
+    let path = fs::canonicalize(Path::new(path.trim()))
+        .map_err(|_| "music_range_source_unavailable".to_string())?;
+    ensure_music_file_allowed(&app, &path)
+        .map_err(|_| "music_range_source_unavailable".to_string())?;
+    if !is_desktop_music_file(&path) {
+        return Err("music_range_source_unavailable".to_string());
+    }
+
+    let metadata = fs::metadata(&path).map_err(|_| "music_range_source_unavailable".to_string())?;
+    if !metadata.is_file() {
+        return Err("music_range_source_unavailable".to_string());
+    }
+
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("music")
+        .to_string();
+    let mime = desktop_music_mime(&path).to_string();
+    let size = metadata.len();
+    let modified_ms = system_time_ms(metadata.modified().ok());
+    let source_id = Uuid::new_v4().to_string();
+    let source = DesktopMusicRangeSourceEntry {
+        path,
+        mime: mime.clone(),
+        size,
+        modified_ms,
+        revoked: Arc::new(AtomicBool::new(false)),
+    };
+
+    let mut sources = desktop_state
+        .music_range_sources
+        .lock()
+        .map_err(|_| "music_range_source_unavailable".to_string())?;
+    sources.retain(|_, source| !source.revoked.load(Ordering::Acquire));
+    if sources.len() >= DESKTOP_MUSIC_RANGE_MAX_SOURCES {
+        return Err("music_range_source_limit_reached".to_string());
+    }
+    sources.insert(source_id.clone(), source);
+
+    Ok(DesktopMusicRangeSource {
+        url: desktop_music_range_url(&source_id),
+        source_id,
+        filename,
+        mime,
+        size,
+        modified_ms,
+    })
+}
+
+#[tauri::command]
+fn close_music_range_source(
+    desktop_state: tauri::State<'_, DesktopState>,
+    source_id: String,
+) -> Result<bool, String> {
+    let source_id = normalize_music_range_source_id(&source_id)
+        .ok_or_else(|| "music_range_source_invalid".to_string())?;
+    let mut sources = desktop_state
+        .music_range_sources
+        .lock()
+        .map_err(|_| "music_range_source_unavailable".to_string())?;
+    let Some(source) = sources.remove(&source_id) else {
+        return Ok(false);
+    };
+    source.revoked.store(true, Ordering::Release);
+    Ok(true)
+}
+
+#[tauri::command]
+fn revoke_music_directory(
+    app: AppHandle,
+    desktop_state: tauri::State<'_, DesktopState>,
+    folder_id: String,
+) -> Result<bool, String> {
+    let folder_id = folder_id.trim();
+    if folder_id.is_empty() {
+        return Ok(false);
+    }
+
+    let mut folders = read_remembered_music_directories(&app);
+    let revoked_folders = folders
+        .iter()
+        .filter(|folder| folder.id == folder_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if revoked_folders.is_empty() {
+        return Ok(false);
+    }
+
+    folders.retain(|folder| folder.id != folder_id);
+    write_remembered_music_directories(&app, &folders)?;
+    revoke_music_range_sources(&desktop_state, &revoked_folders)?;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -1692,6 +2034,7 @@ fn read_music_file(app: AppHandle, path: String) -> Result<DesktopMusicFile, Str
     if !metadata.is_file() {
         return Err("Это не файл".to_string());
     }
+    ensure_legacy_music_file_size(metadata.len())?;
 
     let bytes =
         fs::read(&path).map_err(|error| format!("Не удалось открыть музыкальный файл: {error}"))?;
@@ -1708,6 +2051,262 @@ fn read_music_file(app: AppHandle, path: String) -> Result<DesktopMusicFile, Str
         modified_ms: system_time_ms(metadata.modified().ok()),
         content_base64: general_purpose::STANDARD.encode(bytes),
     })
+}
+
+fn desktop_music_protocol_response(
+    app: &AppHandle,
+    webview_label: &str,
+    request: Request<Vec<u8>>,
+) -> Response<Vec<u8>> {
+    if webview_label != "main" {
+        return desktop_music_protocol_error(StatusCode::FORBIDDEN, "music_source_forbidden");
+    }
+    if request.method() != Method::GET {
+        return desktop_music_protocol_error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "music_source_method_not_allowed",
+        );
+    }
+
+    let Some(source_id) = music_range_source_id_from_path(request.uri().path()) else {
+        return desktop_music_protocol_error(StatusCode::NOT_FOUND, "music_source_not_found");
+    };
+    let source = app
+        .state::<DesktopState>()
+        .music_range_sources
+        .lock()
+        .ok()
+        .and_then(|sources| sources.get(&source_id).cloned());
+    let Some(source) = source else {
+        return desktop_music_protocol_error(StatusCode::NOT_FOUND, "music_source_not_found");
+    };
+    if source.revoked.load(Ordering::Acquire) {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_closed");
+    }
+
+    let Ok(canonical_path) = fs::canonicalize(&source.path) else {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_unavailable");
+    };
+    if canonical_path != source.path || ensure_music_file_allowed(app, &canonical_path).is_err() {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_unavailable");
+    }
+    let Ok(metadata) = fs::metadata(&canonical_path) else {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_unavailable");
+    };
+    let modified_ms = system_time_ms(metadata.modified().ok());
+    if !metadata.is_file()
+        || metadata.len() != source.size
+        || (source.modified_ms > 0 && modified_ms > 0 && modified_ms != source.modified_ms)
+    {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_changed");
+    }
+
+    let range_header = match request.headers().get(header::RANGE) {
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value),
+            Err(_) => return desktop_music_range_not_satisfiable(source.size),
+        },
+        None => None,
+    };
+    if source.size == 0 {
+        if range_header.is_some() {
+            return desktop_music_range_not_satisfiable(0);
+        }
+        return desktop_music_protocol_success(&source.mime, None, Vec::new());
+    }
+
+    let Ok(range) = resolve_desktop_music_byte_range(range_header, source.size) else {
+        return desktop_music_range_not_satisfiable(source.size);
+    };
+    let length = range.end - range.start + 1;
+    let Ok(mut file) = fs::File::open(&canonical_path) else {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_unavailable");
+    };
+    if file.seek(SeekFrom::Start(range.start)).is_err() {
+        return desktop_music_protocol_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "music_source_read_failed",
+        );
+    }
+    let mut body = vec![0; length as usize];
+    if file.read_exact(&mut body).is_err() {
+        return desktop_music_protocol_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "music_source_read_failed",
+        );
+    }
+    if source.revoked.load(Ordering::Acquire) {
+        return desktop_music_protocol_error(StatusCode::GONE, "music_source_closed");
+    }
+
+    desktop_music_protocol_success(&source.mime, Some((range, source.size)), body)
+}
+
+fn ensure_legacy_music_file_size(size: u64) -> Result<(), String> {
+    if size > DESKTOP_MUSIC_LEGACY_MAX_BYTES {
+        Err(DESKTOP_SHELL_UPDATE_REQUIRED.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn desktop_music_protocol_success(
+    mime: &str,
+    range: Option<(DesktopMusicByteRange, u64)>,
+    body: Vec<u8>,
+) -> Response<Vec<u8>> {
+    let status = range
+        .map(|(range, _)| range.status)
+        .unwrap_or(StatusCode::OK);
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .header(header::CONTENT_TYPE, mime)
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .header("X-Content-Type-Options", "nosniff");
+    if let Some((range, size)) =
+        range.filter(|(range, _)| range.status == StatusCode::PARTIAL_CONTENT)
+    {
+        builder = builder.header(
+            header::CONTENT_RANGE,
+            format!("bytes {}-{}/{}", range.start, range.end, size),
+        );
+    }
+    builder
+        .body(body)
+        .unwrap_or_else(|_| Response::new(Vec::new()))
+}
+
+fn desktop_music_protocol_error(status: StatusCode, code: &'static str) -> Response<Vec<u8>> {
+    let body = code.as_bytes().to_vec();
+    Response::builder()
+        .status(status)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(body)
+        .unwrap_or_else(|_| Response::new(Vec::new()))
+}
+
+fn desktop_music_range_not_satisfiable(size: u64) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::CONTENT_LENGTH, "0")
+        .header(header::CONTENT_RANGE, format!("bytes */{size}"))
+        .body(Vec::new())
+        .unwrap_or_else(|_| Response::new(Vec::new()))
+}
+
+fn resolve_desktop_music_byte_range(
+    range_header: Option<&str>,
+    size: u64,
+) -> Result<DesktopMusicByteRange, ()> {
+    if size == 0 {
+        return Err(());
+    }
+    let Some(header) = range_header else {
+        let end = (size - 1).min(DESKTOP_MUSIC_RANGE_MAX_BYTES - 1);
+        return Ok(DesktopMusicByteRange {
+            start: 0,
+            end,
+            status: if end + 1 == size {
+                StatusCode::OK
+            } else {
+                StatusCode::PARTIAL_CONTENT
+            },
+        });
+    };
+
+    let value = header.trim().strip_prefix("bytes=").ok_or(())?;
+    if value.is_empty() || value.contains(',') {
+        return Err(());
+    }
+    let (start_text, end_text) = value.split_once('-').ok_or(())?;
+    if start_text.is_empty() {
+        let suffix = end_text.parse::<u64>().map_err(|_| ())?;
+        if suffix == 0 {
+            return Err(());
+        }
+        let length = suffix.min(size).min(DESKTOP_MUSIC_RANGE_MAX_BYTES);
+        return Ok(DesktopMusicByteRange {
+            start: size - length,
+            end: size - 1,
+            status: StatusCode::PARTIAL_CONTENT,
+        });
+    }
+
+    let start = start_text.parse::<u64>().map_err(|_| ())?;
+    if start >= size {
+        return Err(());
+    }
+    let requested_end = if end_text.is_empty() {
+        size - 1
+    } else {
+        end_text.parse::<u64>().map_err(|_| ())?
+    };
+    if requested_end < start {
+        return Err(());
+    }
+    let end = requested_end
+        .min(size - 1)
+        .min(start.saturating_add(DESKTOP_MUSIC_RANGE_MAX_BYTES - 1));
+    Ok(DesktopMusicByteRange {
+        start,
+        end,
+        status: StatusCode::PARTIAL_CONTENT,
+    })
+}
+
+fn normalize_music_range_source_id(value: &str) -> Option<String> {
+    Uuid::parse_str(value.trim()).ok().map(|id| id.to_string())
+}
+
+fn music_range_source_id_from_path(path: &str) -> Option<String> {
+    let source_id = path.trim_matches('/');
+    if source_id.is_empty() || source_id.contains('/') {
+        return None;
+    }
+    normalize_music_range_source_id(source_id)
+}
+
+fn desktop_music_range_url(source_id: &str) -> String {
+    if cfg!(any(windows, target_os = "android")) {
+        format!("https://{DESKTOP_MUSIC_RANGE_PROTOCOL}.localhost/{source_id}")
+    } else {
+        format!("{DESKTOP_MUSIC_RANGE_PROTOCOL}://localhost/{source_id}")
+    }
+}
+
+fn revoke_music_range_sources(
+    desktop_state: &DesktopState,
+    revoked_folders: &[DesktopMusicDirectory],
+) -> Result<(), String> {
+    let roots = revoked_folders
+        .iter()
+        .map(|folder| {
+            fs::canonicalize(&folder.path).unwrap_or_else(|_| PathBuf::from(&folder.path))
+        })
+        .collect::<Vec<_>>();
+    let mut sources = desktop_state
+        .music_range_sources
+        .lock()
+        .map_err(|_| "music_range_source_unavailable".to_string())?;
+    sources.retain(|_, source| {
+        let keep = !roots.iter().any(|root| source.path.starts_with(root));
+        if !keep {
+            source.revoked.store(true, Ordering::Release);
+        }
+        keep
+    });
+    Ok(())
 }
 
 fn canonicalize_existing_dir(path: &Path) -> Result<PathBuf, String> {
@@ -1807,13 +2406,21 @@ fn ensure_music_file_allowed(app: &AppHandle, path: &Path) -> Result<(), String>
     }
 }
 
+struct DesktopMusicScanContext<'a> {
+    app: &'a AppHandle,
+    generation: u64,
+    root: &'a Path,
+    scan_active: &'a AtomicU64,
+}
+
 fn collect_desktop_music_tracks(
-    root: &Path,
+    context: &DesktopMusicScanContext<'_>,
     directory: &Path,
     depth: usize,
     tracks: &mut Vec<DesktopMusicTrack>,
     truncated: &mut bool,
 ) -> Result<(), String> {
+    ensure_music_scan_active(context.scan_active, context.generation)?;
     if depth > DESKTOP_MUSIC_MAX_DEPTH || tracks.len() >= DESKTOP_MUSIC_MAX_FILES {
         *truncated = true;
         return Ok(());
@@ -1822,6 +2429,7 @@ fn collect_desktop_music_tracks(
     let entries = fs::read_dir(directory)
         .map_err(|error| format!("Не удалось прочитать папку с музыкой: {error}"))?;
     for entry in entries {
+        ensure_music_scan_active(context.scan_active, context.generation)?;
         if tracks.len() >= DESKTOP_MUSIC_MAX_FILES {
             *truncated = true;
             break;
@@ -1834,7 +2442,7 @@ fn collect_desktop_music_tracks(
             .map_err(|error| format!("Не удалось прочитать metadata файла: {error}"))?;
 
         if metadata.is_dir() {
-            collect_desktop_music_tracks(root, &path, depth + 1, tracks, truncated)?;
+            collect_desktop_music_tracks(context, &path, depth + 1, tracks, truncated)?;
             continue;
         }
 
@@ -1848,11 +2456,12 @@ fn collect_desktop_music_tracks(
             .unwrap_or("music")
             .to_string();
         let relative_path = path
-            .strip_prefix(root)
+            .strip_prefix(context.root)
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
         let modified_ms = system_time_ms(metadata.modified().ok());
+        let music_metadata = read_desktop_music_metadata(&path, &desktop_music_title(&filename));
 
         tracks.push(DesktopMusicTrack {
             id: format!(
@@ -1861,17 +2470,173 @@ fn collect_desktop_music_tracks(
                 metadata.len(),
                 modified_ms
             ),
-            title: desktop_music_title(&filename),
+            title: music_metadata.title.clone(),
             filename,
             path: path.to_string_lossy().to_string(),
             relative_path,
             mime: desktop_music_mime(&path).to_string(),
             size: metadata.len(),
             modified_ms,
+            metadata: music_metadata,
         });
+        if tracks
+            .len()
+            .is_multiple_of(DESKTOP_MUSIC_SCAN_PROGRESS_STEP)
+        {
+            emit_desktop_music_scan_progress(
+                context.app,
+                context.generation,
+                tracks.len(),
+                *truncated,
+                false,
+                false,
+            );
+        }
     }
 
     Ok(())
+}
+
+fn emit_desktop_music_scan_progress(
+    app: &AppHandle,
+    generation: u64,
+    scanned: usize,
+    truncated: bool,
+    done: bool,
+    cancelled: bool,
+) {
+    let _ = app.emit(
+        "stem://music-scan-progress",
+        DesktopMusicScanProgress {
+            generation,
+            scanned,
+            truncated,
+            done,
+            cancelled,
+        },
+    );
+}
+
+fn ensure_music_scan_active(scan_active: &AtomicU64, generation: u64) -> Result<(), String> {
+    if scan_active.load(Ordering::Acquire) == generation {
+        Ok(())
+    } else {
+        Err(DESKTOP_MUSIC_SCAN_CANCELLED.to_string())
+    }
+}
+
+fn read_desktop_music_metadata(path: &Path, fallback_title: &str) -> DesktopMusicMetadataV2 {
+    let mut metadata = DesktopMusicMetadataV2 {
+        version: 2,
+        title: fallback_title.to_string(),
+        artist: None,
+        album: None,
+        album_artist: None,
+        duration_ms: 0,
+        year: None,
+        genre: None,
+        track_number: None,
+        track_total: None,
+        disc_number: None,
+        disc_total: None,
+        replay_gain: None,
+    };
+    let Ok(tagged_file) = Probe::open(path).and_then(|probe| {
+        probe
+            .options(ParseOptions::new().read_cover_art(false))
+            .read()
+    }) else {
+        return metadata;
+    };
+
+    let tags = tagged_file.tags();
+    metadata.title = desktop_music_tag_text(tags, &[ItemKey::TrackTitle])
+        .unwrap_or_else(|| fallback_title.to_string());
+    metadata.artist = desktop_music_tag_text(tags, &[ItemKey::TrackArtist, ItemKey::TrackArtists]);
+    metadata.album = desktop_music_tag_text(tags, &[ItemKey::AlbumTitle]);
+    metadata.album_artist =
+        desktop_music_tag_text(tags, &[ItemKey::AlbumArtist, ItemKey::AlbumArtists]);
+    metadata.duration_ms = tagged_file
+        .properties()
+        .duration()
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    metadata.year = tags
+        .iter()
+        .find_map(|tag| tag.date().map(|date| date.year))
+        .or_else(|| {
+            desktop_music_tag_text(tags, &[ItemKey::Year])
+                .and_then(|value| parse_music_year(&value))
+        });
+    metadata.genre = desktop_music_tag_text(tags, &[ItemKey::Genre]);
+    metadata.track_number = tags.iter().find_map(|tag| tag.track());
+    metadata.track_total = tags.iter().find_map(|tag| tag.track_total());
+    metadata.disc_number = tags.iter().find_map(|tag| tag.disk());
+    metadata.disc_total = tags.iter().find_map(|tag| tag.disk_total());
+    metadata.replay_gain = desktop_music_replay_gain(tags);
+    metadata
+}
+
+fn desktop_music_tag_text(tags: &[Tag], keys: &[ItemKey]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        tags.iter().find_map(|tag| {
+            tag.get_string(*key)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+    })
+}
+
+fn desktop_music_replay_gain(tags: &[Tag]) -> Option<DesktopMusicReplayGain> {
+    let replay_gain = DesktopMusicReplayGain {
+        album_gain_db: desktop_music_replay_gain_value(tags, ItemKey::ReplayGainAlbumGain, true),
+        album_peak: desktop_music_replay_gain_value(tags, ItemKey::ReplayGainAlbumPeak, false),
+        track_gain_db: desktop_music_replay_gain_value(tags, ItemKey::ReplayGainTrackGain, true),
+        track_peak: desktop_music_replay_gain_value(tags, ItemKey::ReplayGainTrackPeak, false),
+    };
+    if replay_gain.album_gain_db.is_some()
+        || replay_gain.album_peak.is_some()
+        || replay_gain.track_gain_db.is_some()
+        || replay_gain.track_peak.is_some()
+    {
+        Some(replay_gain)
+    } else {
+        None
+    }
+}
+
+fn desktop_music_replay_gain_value(tags: &[Tag], key: ItemKey, gain: bool) -> Option<f64> {
+    let value = desktop_music_tag_text(tags, &[key])?;
+    let normalized = value.trim();
+    let number = if gain {
+        normalized
+            .strip_suffix("dB")
+            .or_else(|| normalized.strip_suffix("db"))
+            .unwrap_or(normalized)
+            .trim()
+    } else {
+        normalized
+    };
+    let parsed = number.parse::<f64>().ok()?;
+    let valid = parsed.is_finite()
+        && if gain {
+            (-60.0..=60.0).contains(&parsed)
+        } else {
+            (0.0..=16.0).contains(&parsed)
+        };
+    valid.then_some(parsed)
+}
+
+fn parse_music_year(value: &str) -> Option<u16> {
+    let year = value
+        .trim()
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>()
+        .parse::<u16>()
+        .ok()?;
+    (1000..=9999).contains(&year).then_some(year)
 }
 
 fn is_desktop_music_file(path: &Path) -> bool {
@@ -2143,8 +2908,8 @@ fn is_allowed_url(value: &str) -> bool {
 
 fn is_allowed_navigation_url(url: &Url) -> bool {
     match url.scheme() {
+        "http" | "https" if url.host_str() == Some("tauri.localhost") => true,
         "https" | "wss" => url.host_str() == Some(REMOTE_HOST),
-        "http" if url.host_str() == Some("tauri.localhost") => true,
         "http" | "ws" if cfg!(debug_assertions) => {
             matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"))
                 && matches!(url.port(), Some(3010 | 4000 | 1420))
@@ -2215,6 +2980,7 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<WebviewWindow> {
         .resizable(true)
         .decorations(false)
         .shadow(true)
+        .use_https_scheme(true)
         .disable_drag_drop_handler()
         .initialization_script("document.documentElement.classList.add('stem-desktop-frameless');")
         .on_navigation(is_allowed_navigation_url)
@@ -2278,6 +3044,7 @@ fn normalize_desktop_music_player_state(state: DesktopMusicPlayerState) -> Deskt
         duration_sec: finite_non_negative(state.duration_sec),
         failed: state.failed,
         favorite: state.favorite,
+        muted: state.muted,
         pinned: state.pinned,
         playing: state.playing,
         position_sec: finite_non_negative(state.position_sec),
@@ -2287,6 +3054,19 @@ fn normalize_desktop_music_player_state(state: DesktopMusicPlayerState) -> Deskt
             .track_key
             .map(|track_key| clamp_text(track_key, 220))
             .filter(|track_key| !track_key.is_empty()),
+        volume: finite_unit(state.volume),
+    }
+}
+
+fn default_music_volume() -> f64 {
+    1.0
+}
+
+fn finite_unit(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        default_music_volume()
     }
 }
 
@@ -2771,6 +3551,20 @@ mod platform_autostart {
 pub fn run() {
     tauri::Builder::default()
         .manage(DesktopState::default())
+        .register_asynchronous_uri_scheme_protocol(
+            DESKTOP_MUSIC_RANGE_PROTOCOL,
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                let webview_label = context.webview_label().to_string();
+                std::thread::spawn(move || {
+                    responder.respond(desktop_music_protocol_response(
+                        &app,
+                        &webview_label,
+                        request,
+                    ));
+                });
+            },
+        )
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             show_main_window(app);
             if let Some(raw) = capture_argv_deep_link(&argv) {
@@ -2828,9 +3622,15 @@ pub fn run() {
             cancel_file_read_from_downloads_stemred,
             desktop_path_exists,
             open_downloaded_file,
+            get_desktop_music_runtime_capabilities,
             pick_music_directory,
             scan_music_directory,
-            read_music_file
+            cancel_music_directory_scan,
+            read_music_artwork,
+            open_music_range_source,
+            close_music_range_source,
+            revoke_music_directory,
+            read_music_file,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {
@@ -2847,6 +3647,7 @@ pub fn run() {
                         DesktopMusicPlayerCommand {
                             command: "closeMini".to_string(),
                             position_sec: None,
+                            volume: None,
                             source: None,
                         },
                     );
@@ -2887,4 +3688,167 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running STEM desktop shell");
+}
+
+#[cfg(test)]
+mod desktop_music_range_tests {
+    use super::*;
+    use lofty::tag::TagType;
+
+    #[test]
+    fn returns_full_small_file_with_200() {
+        let range = resolve_desktop_music_byte_range(None, 128).expect("range");
+
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 127);
+        assert_eq!(range.status, StatusCode::OK);
+    }
+
+    #[test]
+    fn bounds_gigabyte_file_ranges_to_one_megabyte() {
+        let size = (1_u64 << 30) + DESKTOP_MUSIC_RANGE_MAX_BYTES;
+        let full = resolve_desktop_music_byte_range(None, size).expect("full range");
+        let explicit =
+            resolve_desktop_music_byte_range(Some("bytes=512-"), size).expect("explicit range");
+
+        assert_eq!(full.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(full.end - full.start + 1, DESKTOP_MUSIC_RANGE_MAX_BYTES);
+        assert_eq!(explicit.start, 512);
+        assert_eq!(
+            explicit.end - explicit.start + 1,
+            DESKTOP_MUSIC_RANGE_MAX_BYTES
+        );
+    }
+
+    #[test]
+    fn supports_suffix_ranges() {
+        let range =
+            resolve_desktop_music_byte_range(Some("bytes=-64"), 1024).expect("suffix range");
+
+        assert_eq!(range.start, 960);
+        assert_eq!(range.end, 1023);
+        assert_eq!(range.status, StatusCode::PARTIAL_CONTENT);
+    }
+
+    #[test]
+    fn rejects_multi_and_unsatisfiable_ranges() {
+        assert!(resolve_desktop_music_byte_range(Some("bytes=0-1,4-5"), 8).is_err());
+        assert!(resolve_desktop_music_byte_range(Some("bytes=8-"), 8).is_err());
+        assert!(resolve_desktop_music_byte_range(Some("bytes=6-4"), 8).is_err());
+        assert!(resolve_desktop_music_byte_range(Some("items=0-1"), 8).is_err());
+    }
+
+    #[test]
+    fn accepts_only_an_opaque_uuid_path() {
+        let source_id = Uuid::new_v4().to_string();
+
+        assert_eq!(
+            music_range_source_id_from_path(&format!("/{source_id}")),
+            Some(source_id)
+        );
+        assert_eq!(music_range_source_id_from_path("/C:/Music/track.mp3"), None);
+        assert_eq!(music_range_source_id_from_path("/not-a-source-id"), None);
+    }
+
+    #[test]
+    fn partial_response_exposes_range_headers() {
+        let range = DesktopMusicByteRange {
+            start: 16,
+            end: 31,
+            status: StatusCode::PARTIAL_CONTENT,
+        };
+        let response =
+            desktop_music_protocol_success("audio/mpeg", Some((range, 128)), vec![0; 16]);
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 16-31/128");
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "16");
+        assert_eq!(response.body().len(), 16);
+    }
+
+    #[test]
+    fn unsatisfiable_response_exposes_total_size() {
+        let response = desktop_music_range_not_satisfiable(128);
+
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */128");
+        assert!(response.body().is_empty());
+    }
+
+    #[test]
+    fn legacy_base64_reader_requires_an_update_above_32_megabytes() {
+        assert!(ensure_legacy_music_file_size(DESKTOP_MUSIC_LEGACY_MAX_BYTES).is_ok());
+        assert_eq!(
+            ensure_legacy_music_file_size(DESKTOP_MUSIC_LEGACY_MAX_BYTES + 1),
+            Err(DESKTOP_SHELL_UPDATE_REQUIRED.to_string())
+        );
+    }
+
+    #[test]
+    fn parses_metadata_v2_text_and_replay_gain() {
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.insert_text(ItemKey::TrackTitle, "  Stem Track  ".to_string());
+        tag.insert_text(ItemKey::ReplayGainTrackGain, "-7.25 dB".to_string());
+        tag.insert_text(ItemKey::ReplayGainTrackPeak, "0.98".to_string());
+        let tags = vec![tag];
+
+        assert_eq!(
+            desktop_music_tag_text(&tags, &[ItemKey::TrackTitle]),
+            Some("Stem Track".to_string())
+        );
+        let replay_gain = desktop_music_replay_gain(&tags).expect("replay gain");
+        assert_eq!(replay_gain.track_gain_db, Some(-7.25));
+        assert_eq!(replay_gain.track_peak, Some(0.98));
+    }
+
+    #[test]
+    fn rejects_invalid_metadata_v2_numbers() {
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.insert_text(ItemKey::ReplayGainAlbumGain, "NaN dB".to_string());
+        tag.insert_text(ItemKey::ReplayGainAlbumPeak, "20".to_string());
+        let tags = vec![tag];
+
+        assert!(desktop_music_replay_gain(&tags).is_none());
+        assert_eq!(parse_music_year("2026-07-12"), Some(2026));
+        assert_eq!(parse_music_year("unknown"), None);
+    }
+
+    #[test]
+    fn scan_generation_cancels_stale_workers() {
+        let active = AtomicU64::new(7);
+
+        assert!(ensure_music_scan_active(&active, 7).is_ok());
+        active.store(8, Ordering::Release);
+        assert_eq!(
+            ensure_music_scan_active(&active, 7),
+            Err(DESKTOP_MUSIC_SCAN_CANCELLED.to_string())
+        );
+    }
+
+    #[test]
+    fn clamps_desktop_music_volume_and_keeps_mute_state() {
+        let normalized = normalize_desktop_music_player_state(DesktopMusicPlayerState {
+            muted: true,
+            volume: 4.0,
+            ..DesktopMusicPlayerState::default()
+        });
+
+        assert!(normalized.muted);
+        assert_eq!(normalized.volume, 1.0);
+    }
+
+    #[test]
+    fn scan_progress_payload_never_contains_file_paths() {
+        let payload = serde_json::to_value(DesktopMusicScanProgress {
+            generation: 1,
+            scanned: 32,
+            truncated: false,
+            done: false,
+            cancelled: false,
+        })
+        .expect("scan progress");
+
+        assert!(payload.get("path").is_none());
+        assert!(payload.get("tracks").is_none());
+    }
 }

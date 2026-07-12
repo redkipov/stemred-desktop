@@ -13,12 +13,14 @@ type DesktopMusicPlayerState = {
   durationSec: number;
   failed: boolean;
   favorite: boolean;
+  muted: boolean;
   pinned: boolean;
   playing: boolean;
   positionSec: number;
   sourceLabel: string;
   title: string;
   trackKey: string | null;
+  volume: number;
 };
 
 type DesktopMusicPlayerCommand =
@@ -27,6 +29,8 @@ type DesktopMusicPlayerCommand =
   | { command: 'next' }
   | { command: 'favorite' }
   | { command: 'closeMini' }
+  | { command: 'toggleMute' }
+  | { command: 'setVolume'; volume: number }
   | { command: 'seek'; positionSec: number };
 
 const DEFAULT_STATE: DesktopMusicPlayerState = {
@@ -38,12 +42,14 @@ const DEFAULT_STATE: DesktopMusicPlayerState = {
   durationSec: 0,
   failed: false,
   favorite: false,
+  muted: false,
   pinned: false,
   playing: false,
   positionSec: 0,
   sourceLabel: 'Избранное',
   title: 'StemRed Music',
   trackKey: null,
+  volume: 1,
 };
 
 const root = document.querySelector<HTMLElement>('.mini-player')!;
@@ -58,6 +64,8 @@ const favoriteButton = document.querySelector<HTMLButtonElement>('#mini-favorite
 const previousButton = document.querySelector<HTMLButtonElement>('#mini-prev')!;
 const playButton = document.querySelector<HTMLButtonElement>('#mini-play')!;
 const nextButton = document.querySelector<HTMLButtonElement>('#mini-next')!;
+const muteButton = document.querySelector<HTMLButtonElement>('#mini-mute')!;
+const volumeEl = document.querySelector<HTMLInputElement>('#mini-volume')!;
 
 let playerState = DEFAULT_STATE;
 
@@ -73,13 +81,20 @@ function normalizeState(value: unknown): DesktopMusicPlayerState {
     durationSec: finiteSeconds(state.durationSec),
     failed: Boolean(state.failed),
     favorite: Boolean(state.favorite),
+    muted: Boolean(state.muted),
     pinned: Boolean(state.pinned),
     playing: Boolean(state.playing),
     positionSec: finiteSeconds(state.positionSec),
     sourceLabel: String(state.sourceLabel || 'StemRed Music'),
     title: String(state.title || 'StemRed Music'),
     trackKey: state.trackKey ? String(state.trackKey) : null,
+    volume: finiteUnit(state.volume, 1),
   };
+}
+
+function finiteUnit(value: unknown, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
 }
 
 function finiteSeconds(value: unknown): number {
@@ -120,6 +135,12 @@ function render() {
   playButton.disabled = !playerState.canPlay && !playerState.trackKey;
   playButton.textContent = playerState.buffering ? '…' : playerState.playing ? 'Ⅱ' : '▶';
   playButton.setAttribute('aria-label', playerState.playing ? 'Пауза' : 'Проиграть');
+  const silent = playerState.muted || playerState.volume <= 0.001;
+  muteButton.textContent = silent ? '🔇' : '🔊';
+  muteButton.setAttribute('aria-label', silent ? 'Включить звук' : 'Отключить звук');
+  muteButton.setAttribute('aria-pressed', String(playerState.muted));
+  volumeEl.value = String(Math.round(playerState.volume * 100));
+  volumeEl.setAttribute('aria-valuenow', volumeEl.value);
 }
 
 function applyState(value: unknown) {
@@ -145,6 +166,14 @@ function seekFromClientX(clientX: number) {
   });
 }
 
+function seekTo(positionSec: number) {
+  if (!(playerState.durationSec > 0)) return;
+  void sendCommand({
+    command: 'seek',
+    positionSec: Math.max(0, Math.min(playerState.durationSec, positionSec)),
+  });
+}
+
 function installDragRegions() {
   document.querySelectorAll<HTMLElement>('[data-drag-region]').forEach((element) => {
     element.addEventListener('pointerdown', (event) => {
@@ -160,6 +189,13 @@ favoriteButton.addEventListener('click', () => void sendCommand({ command: 'favo
 previousButton.addEventListener('click', () => void sendCommand({ command: 'previous' }));
 playButton.addEventListener('click', () => void sendCommand({ command: 'playPause' }));
 nextButton.addEventListener('click', () => void sendCommand({ command: 'next' }));
+muteButton.addEventListener('click', () => void sendCommand({ command: 'toggleMute' }));
+volumeEl.addEventListener('input', () => {
+  void sendCommand({
+    command: 'setVolume',
+    volume: finiteUnit(Number(volumeEl.value) / 100, playerState.volume),
+  });
+});
 
 progressEl.addEventListener('pointerdown', (event) => {
   progressEl.setPointerCapture?.(event.pointerId);
@@ -168,6 +204,21 @@ progressEl.addEventListener('pointerdown', (event) => {
 progressEl.addEventListener('pointermove', (event) => {
   if (event.buttons !== 1) return;
   seekFromClientX(event.clientX);
+});
+progressEl.addEventListener('keydown', (event) => {
+  const nextPosition =
+    event.key === 'ArrowLeft' || event.key === 'ArrowDown'
+      ? playerState.positionSec - 5
+      : event.key === 'ArrowRight' || event.key === 'ArrowUp'
+        ? playerState.positionSec + 5
+        : event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? playerState.durationSec
+            : null;
+  if (nextPosition === null) return;
+  event.preventDefault();
+  seekTo(nextPosition);
 });
 
 installDragRegions();

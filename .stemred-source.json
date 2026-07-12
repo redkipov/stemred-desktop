@@ -48,18 +48,18 @@
     },
     {
       "path": "mini-player.html",
-      "sha256": "a621ab4c4f7fe07210e4b000419db9729cc0bca0217db88ede7a6a12c856c793",
-      "size": 2311
+      "sha256": "abb14de552e401265f784ca45a0d05f8d4962263c6e7d5b8feb3cc91f2842dc9",
+      "size": 2678
     },
     {
       "path": "package-lock.json",
-      "sha256": "2554287236f54dded553f97a686eb2fafdd037b944d4e0b7773b3c152dab7888",
+      "sha256": "4450af00371a2ff377dfbcf235f19b26d943e86a72e5c934c512336a1b5c264a",
       "size": 44106
     },
     {
       "path": "package.json",
-      "sha256": "bf65b4505dcbfeae6eb5c7f79f9945a23cf8318e19644f976a78f53b67c10eb4",
-      "size": 1342
+      "sha256": "47e2c03c7cd497fdc3e937fda13fc9d433e32431c4d65fe08f6c24ce96139f7c",
+      "size": 1322
     },
     {
       "path": "public/stemred-logo.png",
@@ -68,13 +68,13 @@
     },
     {
       "path": "scripts/build-windows.ps1",
-      "sha256": "35562ca6a46f45806d56ac9910d54a426b63f653bb32719306ff8b6d11d2a6fc",
-      "size": 12265
+      "sha256": "dfcc89b869f228bb76ff1264f650b7375e5c2b4d4a64b240a70908aa55f8fc30",
+      "size": 12610
     },
     {
       "path": "scripts/check-music-runtime.mjs",
-      "sha256": "8fac81f40b21e7500a1d819443d635cfbcc89bd0122a128f8988a3af87383a7b",
-      "size": 2482
+      "sha256": "25d151300a5e6b1190ed7cf5c66e80aa829f6d9cdd570749b8063421f3866bf6",
+      "size": 3850
     },
     {
       "path": "scripts/sign-windows.ps1",
@@ -83,13 +83,13 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "683dbc4815dbf25a669548c9598a66524871ef7252099cef05452f98b096e56f",
-      "size": 151443
+      "sha256": "7a87576276878e97a8f64ef23b6d05ff0db496758d2f6aa4e68a42512d980da4",
+      "size": 146606
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "66f93829c43f70c1a50dae0fdfe510520a59bec93f3891347def3c217676f6cb",
-      "size": 1622
+      "sha256": "2ce5d0fd88f6ad9d3c8b477ac55ce9f8b11dc4e3a958039624d317c9725f42d9",
+      "size": 1597
     },
     {
       "path": "src-tauri/build.rs",
@@ -108,8 +108,8 @@
     },
     {
       "path": "src-tauri/gen/schemas/acl-manifests.json",
-      "sha256": "99a186219181c83d43bb3ea94c4772ff6ba525b637629e94d4a6b7b12b68231e",
-      "size": 83659
+      "sha256": "c9a75101c2e4e148c48f739812c540d474cccfec997f368be139405e52745c2a",
+      "size": 83829
     },
     {
       "path": "src-tauri/gen/schemas/capabilities.json",
@@ -118,13 +118,13 @@
     },
     {
       "path": "src-tauri/gen/schemas/desktop-schema.json",
-      "sha256": "161dc16e4794020ce7fa18ba878aba7a0ab4e1954c3565d3cc308f1e32393789",
-      "size": 153240
+      "sha256": "d66b8eb72ffa3144a3b43e03c097eaf133dfdcb4c33a04d175b45a45c5398e43",
+      "size": 150338
     },
     {
       "path": "src-tauri/gen/schemas/windows-schema.json",
-      "sha256": "161dc16e4794020ce7fa18ba878aba7a0ab4e1954c3565d3cc308f1e32393789",
-      "size": 153240
+      "sha256": "d66b8eb72ffa3144a3b43e03c097eaf133dfdcb4c33a04d175b45a45c5398e43",
+      "size": 150338
     },
     {
       "path": "src-tauri/icons/icon.ico",
@@ -138,8 +138,8 @@
     },
     {
       "path": "src-tauri/permissions/stem-desktop-commands.toml",
-      "sha256": "ee67e318a422dfb47966a4045d326b4b81215248ec33f79c45cd85ecc85056b0",
-      "size": 1679
+      "sha256": "54f2696310ce23df2721a36afe7287a3f81fa518421b78ac2bc0e53e9d481915",
+      "size": 1873
     },
     {
       "path": "src-tauri/src/desktop_diagnostics.rs",
@@ -153,8 +153,8 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "919a58ea58364adb720af3e8a40900d0782d74736d6b0a48185906e448c27bef",
-      "size": 97983
+      "sha256": "57f447e96e3f6b96f04fddf232c480b227b3ddb36cca9a95b3503558645c83b9",
+      "size": 131054
     },
     {
       "path": "src-tauri/src/main.rs",
@@ -163,12 +163,12 @@
     },
     {
       "path": "src-tauri/src/platform_taskbar.rs",
-      "sha256": "6c517452803c45abad5027d02e76f1a1205844a973879f11d6beb2fa68a26af3",
-      "size": 17713
+      "sha256": "b524f6c56742bc2bab03f40543c660fb637df0797da6ae345f6d16c30f2b1233",
+      "size": 17740
     },
     {
       "path": "src-tauri/tauri.conf.json",
-      "sha256": "df9179745ec9e4b75c5c37258bb2e10ea8b12ac17b68fdd79d6163dbbc08c1a2",
+      "sha256": "1d7140bd7cc2737c1bab04163d3c040368bdd022d6a7d10caa82e8851bcb7e8a",
       "size": 2356
     },
     {
@@ -203,13 +203,13 @@
     },
     {
       "path": "src/mini-player.css",
-      "sha256": "e83ca913e4575ebba8152d02e52b0a441e623a5fba4b3969e639578321c0fb77",
-      "size": 5542
+      "sha256": "d93921d36dc2c4c433c98ae3614a1d9142ab2ca0c2755f4c4fd040919c8e3ce3",
+      "size": 6102
     },
     {
       "path": "src/mini-player.ts",
-      "sha256": "60e4ce0263ec551085d37badcf4709f98e4b4482bf57ae309eae668dc51d29b1",
-      "size": 6976
+      "sha256": "3ad7fd72c9ad6cc4d411f827929a944ac6af803f90565ed08ab0603505fbe1bc",
+      "size": 8970
     },
     {
       "path": "src/styles.css",
@@ -228,7 +228,7 @@
     }
   ],
   "schema": 1,
-  "source_revision": "3d2971eabb2c24fd19e0dbbd8b848429622bbc01",
-  "source_tag": "v0.1.32",
-  "tree_sha256": "407f285cdc6f40a8d28d39ab451bf070c5fec75a8f8415d66a90b64bbeb0e804"
+  "source_revision": "13f36758d3b0aeec29ea1d91a6c3dd8addbc8810",
+  "source_tag": "v0.1.33",
+  "tree_sha256": "0379cbcc0f3bf6a758f777171e0dfb78fb5283a3dcacd0acc762ad5de44b8262"
 }

@@ -30,7 +30,7 @@
       <div class="mini-player__timeline">
         <span id="mini-position">0:00</span>
         <span id="mini-duration">0:00</span>
-        <div id="mini-progress" class="mini-player__progress" role="slider" aria-label="Перемотка" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div id="mini-progress" class="mini-player__progress" role="slider" tabindex="0" aria-label="Перемотка" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
           <span id="mini-progress-fill"></span>
         </div>
       </div>
@@ -38,6 +38,8 @@
       <section class="mini-player__meta">
         <strong id="mini-title">StemRed Music</strong>
         <span id="mini-source">Избранное</span>
+        <button id="mini-mute" class="mini-player__mute" type="button" aria-label="Отключить звук" aria-pressed="false">🔊</button>
+        <input id="mini-volume" class="mini-player__volume" type="range" min="0" max="100" step="1" value="100" aria-label="Громкость" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" />
       </section>
     </main>
     <script type="module" src="/src/mini-player.ts"></script>

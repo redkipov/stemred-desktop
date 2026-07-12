@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "StemRed",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "identifier": "ru.chat-stem.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:web",

@@ -1,6 +1,6 @@
 [package]
 name = "stem_desktop"
-version = "0.1.32"
+version = "0.1.33"
 description = "StemRed desktop shell"
 authors = ["Интеллектуальные системы - Квант"]
 license = "MIT"
@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 log = "0.4"
+lofty = "0.24"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }

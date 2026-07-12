@@ -237,6 +237,8 @@ button:disabled {
 
 .mini-player__meta {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px 54px;
+  grid-template-rows: 1fr 1fr;
   min-width: 0;
   align-content: center;
   gap: 3px;
@@ -251,6 +253,11 @@ button:disabled {
   white-space: nowrap;
 }
 
+.mini-player__meta strong,
+.mini-player__meta span {
+  grid-column: 1;
+}
+
 .mini-player__meta strong {
   font-size: 19px;
   font-weight: 850;
@@ -261,6 +268,29 @@ button:disabled {
   color: rgba(255, 255, 255, 0.66);
   font-size: 13px;
   font-weight: 650;
+}
+
+.mini-player__mute {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+.mini-player__mute:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.mini-player__volume {
+  grid-column: 3;
+  grid-row: 1 / -1;
+  align-self: center;
+  width: 54px;
+  accent-color: #78f95d;
+  cursor: pointer;
 }
 
 @keyframes miniBars {

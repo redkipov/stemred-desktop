@@ -1,5 +1,6 @@
 param(
   [switch]$MicrosoftStore,
+  [switch]$AllowUnsigned,
   [switch]$BumpPatch,
   [string]$Version
 )
@@ -311,6 +312,10 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY -and -not $env:TAURI_SIGNING_PRIVATE_KEY
 if ($BumpPatch -and $Version) {
   throw "Use either -BumpPatch or -Version, not both."
 }
+if ($MicrosoftStore -and $AllowUnsigned) {
+  throw "Microsoft Store releases cannot use -AllowUnsigned."
+}
+
 
 if ($BumpPatch) {
   $Version = Get-NextPatchVersion
@@ -332,7 +337,9 @@ if (($artifactDlib -and -not $artifactMetadata) -or ($artifactMetadata -and -not
 
 $hasSigningConfig = $env:STEM_CODESIGN_THUMBPRINT -or $env:STEM_CODESIGN_PFX -or $hasArtifactSigningConfig
 $isProductionRelease = [bool]($BumpPatch -or $Version)
-if (-not $hasSigningConfig) {
+if ($AllowUnsigned) {
+  Write-Warning "Building without Windows Authenticode by explicit release policy. Tauri updater signing remains required."
+} elseif (-not $hasSigningConfig) {
   if ($MicrosoftStore -or $isProductionRelease) {
     throw "Production desktop release code signing is not configured. Set STEM_CODESIGN_ARTIFACT_DLIB/STEM_CODESIGN_ARTIFACT_METADATA, STEM_CODESIGN_PFX, or STEM_CODESIGN_THUMBPRINT."
   }
@@ -355,7 +362,7 @@ if ($MicrosoftStore) {
   }
 }
 
-if ($hasSigningConfig) {
+if ($hasSigningConfig -and -not $AllowUnsigned) {
   $signScript = Join-Path $PSScriptRoot "sign-windows.ps1"
   if (-not (Test-Path $signScript)) {
     throw "Signing script not found: $signScript"
@@ -386,7 +393,7 @@ try {
     exit $buildCode
   }
   $installer = Get-LatestNsisInstaller
-  if ($MicrosoftStore -or $isProductionRelease) {
+  if ($MicrosoftStore -or ($isProductionRelease -and -not $AllowUnsigned)) {
     Assert-PublicInstallerSignature -Installer $installer
   }
   if (-not $MicrosoftStore) {
