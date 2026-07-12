@@ -15,7 +15,7 @@ use crate::desktop_diagnostics::DesktopDiagnostics;
 const UPDATE_EVENT: &str = "stem://desktop-update-state";
 const CHECK_MIN_INTERVAL_MS: u64 = 60_000;
 const CHECK_FOCUS_TTL_MS: u64 = 6 * 60 * 60 * 1_000;
-const CHECK_FALLBACK_INTERVAL_MS: u64 = 12 * 60 * 60 * 1_000;
+const CHECK_FALLBACK_INTERVAL_MS: u64 = 15 * 60 * 1_000;
 const CHECK_RETRY_MS: [u64; 4] = [60_000, 5 * 60_000, 30 * 60_000, 6 * 60 * 60 * 1_000];
 const AUTO_INSTALL_IDLE_SECONDS: u64 = 10 * 60;
 const BOOT_FAILURE_WINDOW_MS: u64 = 10 * 60 * 1_000;
@@ -916,6 +916,7 @@ mod tests {
         );
         assert!(interval >= CHECK_FALLBACK_INTERVAL_MS * 4 / 5);
         assert!(interval <= CHECK_FALLBACK_INTERVAL_MS * 6 / 5);
+        assert!(interval <= 18 * 60 * 1_000);
     }
 
     #[test]
