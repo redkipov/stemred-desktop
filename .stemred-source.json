@@ -1,5 +1,5 @@
 {
-  "file_count": 45,
+  "file_count": 52,
   "files": [
     {
       "path": ".env.example",
@@ -33,8 +33,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "35afe919e81e9421c9882507d146ac889f30d10829c59180777d0db04456a52a",
-      "size": 3813
+      "sha256": "0f42b8ef731ed4d3e187602e02a868c9455c93ee8057bf9ba68676481a094d6d",
+      "size": 4927
     },
     {
       "path": "SECURITY.md",
@@ -53,12 +53,12 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "e857756154bc7cd23e0986f894a6900808402dff7225e72148a1cc222ea23ce5",
+      "sha256": "ca904b0076ebe8307be6af1d1d32e9838b06314fd2865f95d7431a38893e5777",
       "size": 44106
     },
     {
       "path": "package.json",
-      "sha256": "6415d878ae62672c7efa86935004e363f74c12c3336b509a7c43fc833003c363",
+      "sha256": "8979d7c514ee79606d7456f106fa3a42897db7b60221bcf177d7d721141413f9",
       "size": 1357
     },
     {
@@ -83,13 +83,13 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "7019b09e1463d9967adf553a10569130b489eeca1f7e330f62c1c14ceeb1bd4e",
-      "size": 146606
+      "sha256": "841786bc9919f1fb27b004ab8569da909ffdc5901a2209be67316cc0d46cc773",
+      "size": 188966
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "21ddb4c6f9b7b0fa5f3082b093b44189cef4d63b10ded17ce038309e84526b7a",
-      "size": 1597
+      "sha256": "d89fd4f7578a7c0975eeb82e3f6cad9ca7b8175f859651a0e5b0fc7aa8d16a42",
+      "size": 1740
     },
     {
       "path": "src-tauri/build.rs",
@@ -107,24 +107,29 @@
       "size": 600
     },
     {
+      "path": "src-tauri/capabilities/desktop-secret.json",
+      "sha256": "cba23a8faac128d06c2f501b762cae6a4d278cea9e531cc8c93fe7761094ac3b",
+      "size": 265
+    },
+    {
       "path": "src-tauri/gen/schemas/acl-manifests.json",
-      "sha256": "c9a75101c2e4e148c48f739812c540d474cccfec997f368be139405e52745c2a",
-      "size": 83829
+      "sha256": "6b73b6068b1e2a85e613490e8ad41b335466c37df8585e86ff0e52ebcef9f59e",
+      "size": 84047
     },
     {
       "path": "src-tauri/gen/schemas/capabilities.json",
-      "sha256": "df3da11498b5c3e515bb464c1c548e195e478b733eb2b8ca45f2e42d38e5b241",
-      "size": 904
+      "sha256": "bd76921c261068c9789977e6175bb228d33880068b940de28c3a7bdd47cbdc05",
+      "size": 1105
     },
     {
       "path": "src-tauri/gen/schemas/desktop-schema.json",
-      "sha256": "d66b8eb72ffa3144a3b43e03c097eaf133dfdcb4c33a04d175b45a45c5398e43",
-      "size": 150338
+      "sha256": "b8562b537e77aa1359f4e7c9049cad96dccdea5b0b70b85ef156c456fba6593f",
+      "size": 150645
     },
     {
       "path": "src-tauri/gen/schemas/windows-schema.json",
-      "sha256": "d66b8eb72ffa3144a3b43e03c097eaf133dfdcb4c33a04d175b45a45c5398e43",
-      "size": 150338
+      "sha256": "b8562b537e77aa1359f4e7c9049cad96dccdea5b0b70b85ef156c456fba6593f",
+      "size": 150645
     },
     {
       "path": "src-tauri/icons/icon.ico",
@@ -142,19 +147,29 @@
       "size": 1873
     },
     {
+      "path": "src-tauri/permissions/stem-secret-commands.toml",
+      "sha256": "f6ce01a7dfb7fe3eba9ebc4492ebc2f3f530c8b1aa255217a9f6a9a6ebcd6d0a",
+      "size": 244
+    },
+    {
       "path": "src-tauri/src/desktop_diagnostics.rs",
       "sha256": "4255f5175a2a4a49b683ec62325e6caa195c3205869920c5059c3b5d8412508d",
       "size": 8401
     },
     {
+      "path": "src-tauri/src/desktop_transfer.rs",
+      "sha256": "dcf2a5542dc3a23389e4e71d80fc59e00acfb8a2cab5dc01eb80a7c8fa353c9f",
+      "size": 7912
+    },
+    {
       "path": "src-tauri/src/desktop_update.rs",
-      "sha256": "8c8008a50eec68b2fcdb523173877da5a89084ab76a5cf4ec539081bdb0c869a",
-      "size": 35011
+      "sha256": "85de16931813d7dc24c0e8e0bdc7d0393997f8e44464be6103f1ecfadf9cd7cc",
+      "size": 35641
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "57f447e96e3f6b96f04fddf232c480b227b3ddb36cca9a95b3503558645c83b9",
-      "size": 131054
+      "sha256": "ee3336da9921357d7a35e11101cb12306a6bb407a26d0e695edad3da353e9a2d",
+      "size": 140349
     },
     {
       "path": "src-tauri/src/main.rs",
@@ -167,9 +182,29 @@
       "size": 17740
     },
     {
+      "path": "src-tauri/src/secret_auth_ticket.rs",
+      "sha256": "12b1f9f27cd81a4a8f726169d3a1a2d301128febc85270ea18b10ca850997738",
+      "size": 4303
+    },
+    {
+      "path": "src-tauri/src/secret_commands.rs",
+      "sha256": "e40ffb32183cf9b8b3c8eb3ea61aff39c8fa53cf84b57005a2d4a71937caaf6c",
+      "size": 1219
+    },
+    {
+      "path": "src-tauri/src/secret_state.rs",
+      "sha256": "6e8c8a8b075b1bb80863768ec5d609ef90f88c7e216059e2d81912e556ef5a0e",
+      "size": 1443
+    },
+    {
+      "path": "src-tauri/src/secret_window.rs",
+      "sha256": "d69b060475b83bf28e2e7e2f55fb0203899e5febf793ef68242b5ca77ba00a29",
+      "size": 1345
+    },
+    {
       "path": "src-tauri/tauri.conf.json",
-      "sha256": "f80e0f66892201ddf4c3eacb958d9f826a06c14a866f6e81fd2f884903326125",
-      "size": 2356
+      "sha256": "c8eb6143438bf12677c3d3cc780250afdeea1f90fca7e33970761a739df6faa7",
+      "size": 2374
     },
     {
       "path": "src-tauri/tauri.microsoftstore.conf.json",
@@ -198,8 +233,8 @@
     },
     {
       "path": "src/main.ts",
-      "sha256": "41080c1f1d6adbce54b2beff59117e0b8e817ee04330a8ce1a7554e1b376eeae",
-      "size": 19846
+      "sha256": "db19346d68196b01c84b3287bce81490d79583bad3432d315691244ea96a8e04",
+      "size": 19874
     },
     {
       "path": "src/mini-player.css",
@@ -218,17 +253,17 @@
     },
     {
       "path": "tsconfig.json",
-      "sha256": "f11e5e263354dbe17468ddb9fd86335db6b96b84efea7375f0675d13f9a4ee34",
-      "size": 432
+      "sha256": "0c31fb646d327019b110654b78f8fc9753eb9fb83d5902e549f783c3a10b1a4c",
+      "size": 446
     },
     {
       "path": "vite.config.ts",
-      "sha256": "ddf2f1704ac6ce0ab99d15f9af8a084dfc7373824e8a0a3e7180c8e240618bf2",
-      "size": 444
+      "sha256": "ca3c40bf6ba10da8a8496dcadc365d0de21d151c0f28c1eabba3aa3dde9a595b",
+      "size": 476
     }
   ],
   "schema": 1,
-  "source_revision": "462f06977c8b9ad31adeea6bd24487e56e923eab",
-  "source_tag": "v0.1.34",
-  "tree_sha256": "1000c292b6fa5aaef7423739cbe23c5a67cadd6ffc639ed547d4d5de7fd5d825"
+  "source_revision": "60dce4e17488859039a770a60cd3f807c5de5b47",
+  "source_tag": "v0.1.35",
+  "tree_sha256": "bbf6414568ce0dcf686ee17ff07c824f06ced44bd72c857d447316a0743058b2"
 }

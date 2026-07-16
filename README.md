@@ -19,6 +19,16 @@ Project policies:
 - If `/api/client/config` is not deployed yet but `https://chat-stem.ru/` is reachable, the shell still opens the default domain.
 - Normal web changes ship through the server deploy. Native updates are only for wrapper changes.
 
+## Update compatibility
+
+- The audited direct-upgrade floor is `0.1.8`, the oldest public source release. Every public `0.1.x` shell uses the same HTTPS updater endpoint, Tauri 2 updater plugin and pinned minisign public key.
+- `0.1.35` is a universal stable target: the update feed has no minimum-current-version restriction, so `0.1.8–0.1.34` can update directly without intermediate installers.
+- Shells `0.1.8–0.1.11` expose the updater plugin but their legacy install command returns `false`. The hosted UI treats that as a compatibility signal and completes the signed update through the plugin.
+- Builds before `0.1.8` are supported on a best-effort basis when they use the same endpoint, public key and updater plugin. Otherwise install the latest immutable GitHub Release manually.
+- A user-initiated retry may bypass the one-minute background check guard. Focus and scheduler checks remain rate-limited.
+
+The updater never falls back to an unsigned arbitrary URL. Direct Windows releases may lack Authenticode while the Tauri signature, SHA256 and versioned GitHub asset remain mandatory.
+
 ## Windows build
 
 ```powershell

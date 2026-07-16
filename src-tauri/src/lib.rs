@@ -4,7 +4,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose, Engine as _};
 use lofty::config::ParseOptions;
@@ -22,19 +22,33 @@ use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 use uuid::Uuid;
 
 mod desktop_diagnostics;
+mod desktop_transfer;
 mod desktop_update;
 mod platform_taskbar;
+mod secret_auth_ticket;
+mod secret_commands;
+mod secret_state;
+mod secret_window;
 
 use desktop_diagnostics::DesktopDiagnostics;
+use desktop_transfer::{
+    bounded_read_length, ensure_base64_input_size, ensure_decoded_size, transfer_is_stale,
+    DesktopPartialFile, DesktopTransferBudget, DesktopTransferPermit,
+    DESKTOP_TRANSFER_LEGACY_MAX_BYTES, DESKTOP_TRANSFER_MAX_CHUNK_BYTES,
+};
 use desktop_update::{
     DesktopRuntimeReadiness, DesktopUpdateCoordinator, DesktopUpdateSafety, DesktopUpdateSnapshot,
 };
+use secret_auth_ticket::SecretAuthTicketStore;
+use secret_state::SecretRuntimeState;
+use secret_window::create_secret_window;
 
 const DEFAULT_REMOTE_URL: &str = "https://chat-stem.ru/messages";
 const DEFAULT_CONFIG_URL: &str = "https://chat-stem.ru/api/client/config";
@@ -52,6 +66,11 @@ const DESKTOP_MUSIC_LEGACY_MAX_BYTES: u64 = 32 * 1024 * 1024;
 const DESKTOP_MUSIC_ARTWORK_MAX_BYTES: usize = 2 * 1024 * 1024;
 const DESKTOP_MUSIC_SCAN_CANCELLED: &str = "music_scan_cancelled";
 const DESKTOP_SHELL_UPDATE_REQUIRED: &str = "desktop_shell_update_required";
+const DESKTOP_DOWNLOAD_OPEN_EXTENSIONS: &[&str] = &[
+    "aac", "avif", "bmp", "csv", "docx", "flac", "gif", "heic", "heif", "jpeg", "jpg", "m4a", "md",
+    "mkv", "mov", "mp3", "mp4", "ogg", "opus", "pdf", "png", "pptx", "txt", "wav", "webm", "webp",
+    "xlsx",
+];
 #[allow(dead_code)]
 const DESKTOP_CHROME_INITIALIZATION_SCRIPT: &str = r#"
 (() => {
@@ -740,6 +759,7 @@ struct DesktopState {
     recent_notifications: Mutex<Vec<(String, u128)>>,
     pending_downloads: Mutex<HashMap<String, DesktopPendingDownload>>,
     pending_file_reads: Mutex<HashMap<String, DesktopPendingFileRead>>,
+    transfer_budget: Arc<DesktopTransferBudget>,
     music_player_state: Mutex<DesktopMusicPlayerState>,
     music_range_sources: Mutex<HashMap<String, DesktopMusicRangeSourceEntry>>,
     music_scan_active: Arc<AtomicU64>,
@@ -755,6 +775,7 @@ impl Default for DesktopState {
             recent_notifications: Mutex::new(Vec::new()),
             pending_downloads: Mutex::new(HashMap::new()),
             pending_file_reads: Mutex::new(HashMap::new()),
+            transfer_budget: Arc::new(DesktopTransferBudget::default()),
             music_player_state: Mutex::new(DesktopMusicPlayerState::default()),
             music_range_sources: Mutex::new(HashMap::new()),
             music_scan_active: Arc::new(AtomicU64::new(0)),
@@ -888,17 +909,39 @@ struct DesktopDownloadReadChunkResult {
     bytes_read: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct DesktopPendingDownload {
     filename: String,
     directory: PathBuf,
-    path: PathBuf,
+    partial_file: DesktopPartialFile,
+    permit: DesktopTransferPermit,
+    last_activity: Instant,
 }
 
 #[derive(Debug)]
 struct DesktopPendingFileRead {
     file: fs::File,
     size: u64,
+    _permit: DesktopTransferPermit,
+    last_activity: Instant,
+}
+
+fn prune_stale_desktop_transfers(state: &DesktopState, now: Instant) -> Result<(), String> {
+    {
+        let mut downloads = state
+            .pending_downloads
+            .lock()
+            .map_err(|_| "Не удалось очистить незавершённые сохранения".to_string())?;
+        downloads.retain(|_, pending| !transfer_is_stale(pending.last_activity, now));
+    }
+    {
+        let mut reads = state
+            .pending_file_reads
+            .lock()
+            .map_err(|_| "Не удалось очистить незавершённые чтения".to_string())?;
+        reads.retain(|_, pending| !transfer_is_stale(pending.last_activity, now));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1265,8 +1308,9 @@ async fn desktop_update_request_check(
     app: AppHandle,
     state: tauri::State<'_, DesktopUpdateCoordinator>,
     force: bool,
+    user_initiated: Option<bool>,
 ) -> Result<DesktopUpdateSnapshot, String> {
-    desktop_update::request_check(&app, &state, force).await
+    desktop_update::request_check(&app, &state, force, user_initiated.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -1318,7 +1362,7 @@ async fn check_desktop_shell_update(
     app: AppHandle,
     state: tauri::State<'_, DesktopUpdateCoordinator>,
 ) -> Result<DesktopShellUpdateStatus, String> {
-    let snapshot = desktop_update::request_check(&app, &state, true).await?;
+    let snapshot = desktop_update::request_check(&app, &state, true, false).await?;
     Ok(DesktopShellUpdateStatus {
         available: snapshot.target_version.is_some(),
         current_version: snapshot.current_version,
@@ -1331,7 +1375,7 @@ async fn install_desktop_shell_update(
     app: AppHandle,
     state: tauri::State<'_, DesktopUpdateCoordinator>,
 ) -> Result<bool, String> {
-    let snapshot = desktop_update::request_check(&app, &state, true).await?;
+    let snapshot = desktop_update::request_check(&app, &state, true, true).await?;
     if !snapshot.install_ready {
         return Ok(false);
     }
@@ -1350,7 +1394,7 @@ fn spawn_desktop_update_scheduler(app: AppHandle) {
                     state.check_due() || (initial_check_pending && state.cached_runtime_ready());
                 if should_check {
                     initial_check_pending = false;
-                    let _ = desktop_update::request_check(&app, &state, true).await;
+                    let _ = desktop_update::request_check(&app, &state, true, false).await;
                 }
 
                 let idle_seconds = platform_activity::snapshot()
@@ -1443,22 +1487,40 @@ fn show_desktop_notification(
 #[tauri::command]
 fn save_file_to_downloads_stem(
     app: AppHandle,
+    state: tauri::State<'_, DesktopState>,
     filename: String,
     content_base64: String,
 ) -> Result<DesktopDownloadSaveResult, String> {
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
+    let mut permit = state
+        .transfer_budget
+        .acquire()
+        .map_err(|error| error.to_string())?;
+    let encoded = ensure_base64_input_size(&content_base64, DESKTOP_TRANSFER_LEGACY_MAX_BYTES)
+        .map_err(|error| error.to_string())?;
     let bytes = general_purpose::STANDARD
-        .decode(content_base64.trim())
+        .decode(encoded)
         .map_err(|error| format!("Не удалось прочитать файл: {error}"))?;
+    ensure_decoded_size(bytes.len(), DESKTOP_TRANSFER_LEGACY_MAX_BYTES)
+        .map_err(|error| error.to_string())?;
     if bytes.is_empty() {
         return Err("Файл пустой".to_string());
     }
+    permit
+        .reserve_bytes(bytes.len() as u64)
+        .map_err(|error| error.to_string())?;
 
     let directory = stemred_download_directory(&app)?;
     let safe_filename = sanitize_download_filename(&filename);
     let target = unique_download_path(&directory, &safe_filename);
-    fs::write(&target, bytes).map_err(|error| format!("Не удалось сохранить файл: {error}"))?;
+    let mut partial_file = DesktopPartialFile::new(target);
+    fs::write(partial_file.path(), &bytes)
+        .map_err(|error| format!("Не удалось сохранить файл: {error}"))?;
 
-    Ok(desktop_download_result(&directory, &target, &safe_filename))
+    let result = desktop_download_result(&directory, partial_file.path(), &safe_filename);
+    partial_file.preserve();
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1467,6 +1529,12 @@ fn begin_file_save_to_downloads_stemred(
     state: tauri::State<'_, DesktopState>,
     filename: String,
 ) -> Result<DesktopDownloadBeginResult, String> {
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
+    let permit = state
+        .transfer_budget
+        .acquire()
+        .map_err(|error| error.to_string())?;
     let directory = stemred_download_directory(&app)?;
     let safe_filename = sanitize_download_filename(&filename);
     let target = unique_download_path(&directory, &safe_filename);
@@ -1485,7 +1553,9 @@ fn begin_file_save_to_downloads_stemred(
     let pending = DesktopPendingDownload {
         filename: result.filename.clone(),
         directory,
-        path: target,
+        partial_file: DesktopPartialFile::new(target),
+        permit,
+        last_activity: now,
     };
     state
         .pending_downloads
@@ -1511,27 +1581,49 @@ fn write_file_save_chunk_to_downloads_stemred(
     if transfer_id.is_empty() {
         return Err("Не найден идентификатор сохранения".to_string());
     }
-    let path = state
-        .pending_downloads
-        .lock()
-        .map_err(|_| "Не удалось продолжить сохранение файла".to_string())?
-        .get(transfer_id)
-        .map(|pending| pending.path.clone())
-        .ok_or_else(|| "Сохранение файла уже не активно".to_string())?;
-
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
+    let encoded = ensure_base64_input_size(&chunk_base64, DESKTOP_TRANSFER_MAX_CHUNK_BYTES)
+        .map_err(|error| error.to_string())?;
     let bytes = general_purpose::STANDARD
-        .decode(chunk_base64.trim())
+        .decode(encoded)
         .map_err(|error| format!("Не удалось прочитать часть файла: {error}"))?;
+    ensure_decoded_size(bytes.len(), DESKTOP_TRANSFER_MAX_CHUNK_BYTES)
+        .map_err(|error| error.to_string())?;
     if bytes.is_empty() {
         return Ok(());
     }
 
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .map_err(|error| format!("Не удалось открыть файл для записи: {error}"))?;
-    file.write_all(&bytes)
-        .map_err(|error| format!("Не удалось записать часть файла: {error}"))
+    let mut downloads = state
+        .pending_downloads
+        .lock()
+        .map_err(|_| "Не удалось продолжить сохранение файла".to_string())?;
+    let write_error = {
+        let pending = downloads
+            .get_mut(transfer_id)
+            .ok_or_else(|| "Сохранение файла уже не активно".to_string())?;
+        pending
+            .permit
+            .reserve_bytes(bytes.len() as u64)
+            .map_err(|error| error.to_string())?;
+        let result = (|| {
+            let mut file = OpenOptions::new()
+                .append(true)
+                .open(pending.partial_file.path())
+                .map_err(|error| format!("Не удалось открыть файл для записи: {error}"))?;
+            file.write_all(&bytes)
+                .map_err(|error| format!("Не удалось записать часть файла: {error}"))
+        })();
+        if result.is_ok() {
+            pending.last_activity = now;
+        }
+        result.err()
+    };
+    if let Some(error) = write_error {
+        downloads.remove(transfer_id);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1543,26 +1635,32 @@ fn finish_file_save_to_downloads_stemred(
     if transfer_id.is_empty() {
         return Err("Не найден идентификатор сохранения".to_string());
     }
-    let pending = state
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
+    let mut pending = state
         .pending_downloads
         .lock()
         .map_err(|_| "Не удалось завершить сохранение файла".to_string())?
         .remove(transfer_id)
         .ok_or_else(|| "Сохранение файла уже не активно".to_string())?;
 
-    let size = fs::metadata(&pending.path)
+    let size = fs::metadata(pending.partial_file.path())
         .map_err(|error| format!("Не удалось проверить сохранённый файл: {error}"))?
         .len();
     if size == 0 {
-        let _ = fs::remove_file(&pending.path);
         return Err("Файл пустой".to_string());
     }
+    if size != pending.permit.reserved_bytes() {
+        return Err("Размер сохранённого файла не совпадает с принятыми частями".to_string());
+    }
 
-    Ok(desktop_download_result(
+    let result = desktop_download_result(
         &pending.directory,
-        &pending.path,
+        pending.partial_file.path(),
         &pending.filename,
-    ))
+    );
+    pending.partial_file.preserve();
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1574,14 +1672,13 @@ fn cancel_file_save_to_downloads_stemred(
     if transfer_id.is_empty() {
         return Ok(());
     }
-    let pending = state
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
+    state
         .pending_downloads
         .lock()
         .map_err(|_| "Не удалось отменить сохранение файла".to_string())?
         .remove(transfer_id);
-    if let Some(pending) = pending {
-        let _ = fs::remove_file(pending.path);
-    }
     Ok(())
 }
 
@@ -1627,6 +1724,12 @@ fn begin_file_read_from_downloads_stemred(
         return Err("Файл недоступен".to_string());
     }
 
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
+    let permit = state
+        .transfer_budget
+        .acquire()
+        .map_err(|error| error.to_string())?;
     let file = fs::File::open(&target)
         .map_err(|error| format!("Не удалось открыть файл для чтения: {error}"))?;
     let directory = fs::canonicalize(stemred_download_directory(&app)?)
@@ -1651,6 +1754,8 @@ fn begin_file_read_from_downloads_stemred(
             DesktopPendingFileRead {
                 file,
                 size: metadata.len(),
+                _permit: permit,
+                last_activity: now,
             },
         );
 
@@ -1674,6 +1779,8 @@ fn read_file_chunk_from_downloads_stemred(
     if transfer_id.is_empty() {
         return Err("Не найден идентификатор чтения".to_string());
     }
+    let now = Instant::now();
+    prune_stale_desktop_transfers(state.inner(), now)?;
     if length == 0 {
         return Ok(DesktopDownloadReadChunkResult {
             chunk_base64: String::new(),
@@ -1689,14 +1796,14 @@ fn read_file_chunk_from_downloads_stemred(
         .get_mut(transfer_id)
         .ok_or_else(|| "Чтение файла уже не активно".to_string())?;
     if offset >= pending.size {
+        pending.last_activity = now;
         return Ok(DesktopDownloadReadChunkResult {
             chunk_base64: String::new(),
             bytes_read: 0,
         });
     }
 
-    let max_length = usize::try_from((pending.size - offset).min(length as u64))
-        .map_err(|_| "Некорректный размер части файла".to_string())?;
+    let max_length = bounded_read_length(length, pending.size - offset);
     let mut buffer = vec![0u8; max_length];
     pending
         .file
@@ -1707,6 +1814,7 @@ fn read_file_chunk_from_downloads_stemred(
         .read(&mut buffer)
         .map_err(|error| format!("Не удалось прочитать часть файла: {error}"))?;
     buffer.truncate(bytes_read);
+    pending.last_activity = now;
 
     Ok(DesktopDownloadReadChunkResult {
         chunk_base64: general_purpose::STANDARD.encode(buffer),
@@ -1757,6 +1865,41 @@ fn open_downloaded_file(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|error| format!("Папка загрузок недоступна: {error}"))?;
     if !target.starts_with(&directory) {
         return Err("Файл находится вне папки загрузок StemRed".to_string());
+    }
+
+    if !is_downloaded_file_open_allowed(&target) {
+        return Err(
+            "Этот тип файла нельзя открыть напрямую. Используйте папку загрузок StemRed."
+                .to_string(),
+        );
+    }
+
+    let filename = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            value
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(120)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "файл".to_string());
+    let confirmed = app
+        .dialog()
+        .message(format!(
+            "Открыть файл «{filename}» в приложении Windows?\n\nОткрывайте файл только если доверяете отправителю."
+        ))
+        .title("Открытие скачанного файла")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Открыть".to_string(),
+            "Отмена".to_string(),
+        ))
+        .blocking_show();
+    if !confirmed {
+        return Ok(());
     }
 
     app.opener()
@@ -2725,6 +2868,7 @@ fn close_file_read_from_downloads_stemred(
     state: tauri::State<'_, DesktopState>,
     transfer_id: String,
 ) -> Result<(), String> {
+    prune_stale_desktop_transfers(state.inner(), Instant::now())?;
     let transfer_id = transfer_id.trim();
     if transfer_id.is_empty() {
         return Ok(());
@@ -2736,6 +2880,16 @@ fn close_file_read_from_downloads_stemred(
         .map_err(|_| "Не удалось закрыть чтение файла".to_string())?
         .remove(transfer_id);
     Ok(())
+}
+
+fn is_downloaded_file_open_allowed(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            DESKTOP_DOWNLOAD_OPEN_EXTENSIONS
+                .iter()
+                .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+        })
 }
 
 fn desktop_download_result(
@@ -3551,6 +3705,8 @@ mod platform_autostart {
 pub fn run() {
     tauri::Builder::default()
         .manage(DesktopState::default())
+        .manage(SecretAuthTicketStore::default())
+        .manage(SecretRuntimeState)
         .register_asynchronous_uri_scheme_protocol(
             DESKTOP_MUSIC_RANGE_PROTOCOL,
             |context, request, responder| {
@@ -3582,6 +3738,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            secret_commands::secret_crypto_status,
             bootstrap,
             resolve_deep_link,
             take_pending_deep_link,
@@ -3665,6 +3822,7 @@ pub fn run() {
             let _ = platform_autostart::ensure_default_enabled_once(&app_handle);
 
             let main_window = create_main_window(app)?;
+            create_secret_window(app)?;
             platform_taskbar::install(&app_handle, &main_window);
             create_tray(app)?;
             spawn_desktop_update_scheduler(app_handle.clone());
@@ -3694,6 +3852,83 @@ pub fn run() {
 mod desktop_music_range_tests {
     use super::*;
     use lofty::tag::TagType;
+
+    #[test]
+    fn allows_supported_download_handler_extensions() {
+        for filename in ["report.PDF", "photo.webp", "track.Mp3", "sheet.xlsx"] {
+            assert!(
+                is_downloaded_file_open_allowed(Path::new(filename)),
+                "{filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_untrusted_download_handler_extensions() {
+        for filename in [
+            "payload.exe",
+            "script.cmd",
+            "shortcut.lnk",
+            "archive.zip",
+            "page.html",
+            "report.pdf.exe",
+            "no-extension",
+        ] {
+            assert!(
+                !is_downloaded_file_open_allowed(Path::new(filename)),
+                "{filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn prunes_stale_transfers_and_partial_downloads() {
+        let state = DesktopState::default();
+        let directory = tempfile::tempdir().expect("tempdir");
+        let now = Instant::now();
+        let stale_at =
+            now - desktop_transfer::DESKTOP_TRANSFER_IDLE_TIMEOUT - Duration::from_secs(1);
+        let partial_path = directory.path().join("partial.bin");
+        fs::write(&partial_path, b"partial").expect("partial file");
+        let download_permit = state.transfer_budget.acquire().expect("download permit");
+        state.pending_downloads.lock().expect("downloads").insert(
+            "stale-download".to_string(),
+            DesktopPendingDownload {
+                filename: "partial.bin".to_string(),
+                directory: directory.path().to_path_buf(),
+                partial_file: DesktopPartialFile::new(partial_path.clone()),
+                permit: download_permit,
+                last_activity: stale_at,
+            },
+        );
+
+        let read_path = directory.path().join("read.bin");
+        fs::write(&read_path, b"read").expect("read file");
+        let read_permit = state.transfer_budget.acquire().expect("read permit");
+        state.pending_file_reads.lock().expect("reads").insert(
+            "stale-read".to_string(),
+            DesktopPendingFileRead {
+                file: fs::File::open(&read_path).expect("open read file"),
+                size: 4,
+                _permit: read_permit,
+                last_activity: stale_at,
+            },
+        );
+
+        prune_stale_desktop_transfers(&state, now).expect("prune");
+
+        assert!(state
+            .pending_downloads
+            .lock()
+            .expect("downloads")
+            .is_empty());
+        assert!(state.pending_file_reads.lock().expect("reads").is_empty());
+        assert!(!partial_path.exists());
+        let permits = (0..desktop_transfer::DESKTOP_TRANSFER_MAX_ACTIVE)
+            .map(|_| state.transfer_budget.acquire().expect("released permit"))
+            .collect::<Vec<_>>();
+        assert_eq!(permits.len(), desktop_transfer::DESKTOP_TRANSFER_MAX_ACTIVE);
+    }
 
     #[test]
     fn returns_full_small_file_with_200() {

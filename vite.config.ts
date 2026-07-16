@@ -16,6 +16,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         miniPlayer: 'mini-player.html',
+        secret: 'secret.html',
       },
     },
   },

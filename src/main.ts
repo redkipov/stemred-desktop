@@ -470,6 +470,7 @@ async function installUpdate() {
   try {
     const snapshot = await invoke<DesktopUpdateSnapshot>('desktop_update_request_check', {
       force: true,
+      userInitiated: true,
     });
     if (!snapshot.install_ready) {
       setButtons(latestBootstrap?.state === 'update_required' ? 'retry' : 'open', 'retry');

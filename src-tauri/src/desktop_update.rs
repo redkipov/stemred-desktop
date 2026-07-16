@@ -346,6 +346,7 @@ pub async fn request_check(
     app: &AppHandle,
     coordinator: &DesktopUpdateCoordinator,
     force: bool,
+    user_initiated: bool,
 ) -> Result<DesktopUpdateSnapshot, String> {
     let (install_id, channel) = {
         let mut inner = coordinator
@@ -359,7 +360,7 @@ pub async fn request_check(
         if inner.downloaded_bytes.is_some() {
             return Ok(inner.snapshot.clone());
         }
-        if force && now.saturating_sub(inner.last_check_at_ms) < CHECK_MIN_INTERVAL_MS {
+        if force && check_rate_limited(inner.last_check_at_ms, now, user_initiated) {
             return Ok(inner.snapshot.clone());
         }
         if !force
@@ -827,6 +828,10 @@ fn fallback_interval_ms(install_id: &str) -> u64 {
         .saturating_add(seed % (range.saturating_mul(2).saturating_add(1)))
 }
 
+fn check_rate_limited(last_check_at_ms: u64, now: u64, user_initiated: bool) -> bool {
+    !user_initiated && now.saturating_sub(last_check_at_ms) < CHECK_MIN_INTERVAL_MS
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -917,6 +922,19 @@ mod tests {
         assert!(interval >= CHECK_FALLBACK_INTERVAL_MS * 4 / 5);
         assert!(interval <= CHECK_FALLBACK_INTERVAL_MS * 6 / 5);
         assert!(interval <= 18 * 60 * 1_000);
+    }
+
+    #[test]
+    fn manual_check_bypasses_only_the_background_rate_limit() {
+        let last_check = 10_000;
+        let now = last_check + 1_000;
+        assert!(check_rate_limited(last_check, now, false));
+        assert!(!check_rate_limited(last_check, now, true));
+        assert!(!check_rate_limited(
+            last_check,
+            last_check + CHECK_MIN_INTERVAL_MS,
+            false
+        ));
     }
 
     #[test]
