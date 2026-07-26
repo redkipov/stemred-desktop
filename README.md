@@ -29,6 +29,14 @@ Project policies:
 
 The updater never falls back to an unsigned arbitrary URL. Direct Windows releases may lack Authenticode while the Tauri signature, SHA256 and versioned GitHub asset remain mandatory.
 
+## Windows Secret Beta 0.1.37
+
+The current private Windows Preview adds DPAPI-protected persistent device identity, MLS create/invite/accept/send/decrypt, durable offline outbox and restart recovery, safety-number verification, explicit identity-change confirmation, and plaintext cleanup on lock, sleep, and logout. Transparency commitments use a private Tessera log with pinned origin and three Preview witness keys plus RFC 6962 proof verification.
+
+This is not a public stable release. The installer is distributed only through cohort-private storage for the two-account/two-device beta and is never advertised by the ordinary updater or attached to a public GitHub Release. Windows Authenticode is currently absent; the Tauri updater signature and SHA-256 release manifest remain mandatory. VBS/TPM, independent witness operators, production attestation, and general rollout are a later milestone.
+
+Source can be built from the main monorepo with `npm run release:secret-beta`; all Rust/Tauri build outputs must stay under `F:\STEM-build` on the Windows release machine. The final two-client vertical acceptance test remains required before beta activation.
+
 ## Windows build
 
 ```powershell
@@ -46,6 +54,22 @@ npm run release:win
 ```
 
 After that, commit the version files and update `deploy\.env.release` in the main repository so `DESKTOP_RECOMMENDED_SHELL_VERSION`, `DESKTOP_UPDATE_WINDOWS_X86_64_VERSION`, URL and signature all point to the same new version. Deploy refuses mismatched metadata.
+
+### Release profiles
+
+The public `ordinary` profile is the current unsigned Windows release. It is compiled without the `secret-crypto` feature, keeps the managed messenger behavior unchanged and is the only profile that may be published through the ordinary updater:
+
+```powershell
+npm run release:win
+```
+
+The private `secret-beta` command uses the already aligned desktop version, enables `secret-crypto` and permits the Preview milestone to run without Authenticode. Rust/Tauri sources are mirrored to `F:\STEM-build\source-current\stem-messenger`, Cargo artifacts go to `F:\STEM-build\cargo-target`, and Tauri therefore generates `src-tauri\gen\schemas` outside `Documents`. Configure `STEM_SECRET_WINDOWS_RELEASE_ID` and the four transparency pins in the main repository's `deploy\.env.release`; the build script loads them from that single release source and rejects a version or environment mismatch:
+
+```powershell
+npm run release:secret-beta
+```
+
+The four transparency keys are compiled into the beta runtime; missing, duplicate or mismatched pins stop the build/preflight. Authenticode remains deferred, while the Tauri updater signature is still mandatory. Output is isolated under `release\secret-beta\windows\x64\<version>` and must only be distributed to the two-account Preview allowlist; it never replaces the ordinary `release\Setup STEM.exe` artifact. The full order is documented in `docs\secret-windows-deploy-readiness-plan.md`.
 
 Generated folders and release artifacts are not part of the source release:
 
