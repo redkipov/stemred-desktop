@@ -21,13 +21,21 @@ Project policies:
 
 ## Update compatibility
 
-- The audited direct-upgrade floor is `0.1.8`, the oldest public source release. Every public `0.1.x` shell uses the same HTTPS updater endpoint, Tauri 2 updater plugin and pinned minisign public key.
-- `0.1.35` is a universal stable target: the update feed has no minimum-current-version restriction, so `0.1.8–0.1.34` can update directly without intermediate installers.
-- Shells `0.1.8–0.1.11` expose the updater plugin but their legacy install command returns `false`. The hosted UI treats that as a compatibility signal and completes the signed update through the plugin.
-- Builds before `0.1.8` are supported on a best-effort basis when they use the same endpoint, public key and updater plugin. Otherwise install the latest immutable GitHub Release manually.
+- The public baseline is 0.1.35. It receives ordinary Windows updates through the native coordinator, the common HTTPS endpoint and the pinned Tauri minisign public key.
+- Enabling beta on 0.1.35 stores the opt-in but does not use the unavailable raw updater/process plugin fallback and never opens an unsigned EXE automatically.
+- The first safe transition is two-stage: ordinary bridge 0.1.38 arrives through stable, then transfers the saved beta choice into the native journal and offers Secret beta 0.1.39 after restart.
+- Stable and beta artifacts must have different increasing versions. A bridge and Secret beta with one version would make the latter invisible to semver update selection.
 - A user-initiated retry may bypass the one-minute background check guard. Focus and scheduler checks remain rate-limited.
 
-The updater never falls back to an unsigned arbitrary URL. Direct Windows releases may lack Authenticode while the Tauri signature, SHA256 and versioned GitHub asset remain mandatory.
+The updater never falls back to an unsigned arbitrary URL. Windows releases may lack Authenticode during Preview, while the Tauri updater signature, SHA-256 and immutable versioned server asset remain mandatory.
+
+## Windows Secret Beta 0.1.39
+
+The Windows Preview adds DPAPI-protected persistent device identity, MLS create/invite/accept/send/decrypt, durable offline outbox and restart recovery, safety-number verification, explicit identity-change confirmation, and plaintext cleanup on lock, sleep, and logout. Transparency commitments use a private Tessera log with pinned origin and three Preview witness keys plus RFC 6962 proof verification.
+
+This is not a public stable release. It is offered only after explicit Windows beta opt-in and remains unusable unless the native crypto runtime is present. The backend cohort is still restricted to the two-account/two-device allowlist. Windows Authenticode is currently absent; the Tauri updater signature and SHA-256 release manifest remain mandatory. VBS/TPM, independent witness operators, production attestation, and general rollout are a later milestone.
+
+Source can be built from the main monorepo with `npm run release:secret-beta`; all Rust/Tauri build outputs must stay under `F:\STEM-build` on the Windows release machine. The final two-client vertical acceptance test remains required before backend beta activation.
 
 ## Windows build
 
@@ -45,7 +53,23 @@ For a production desktop update, bump the patch version during the build:
 npm run release:win
 ```
 
-After that, commit the version files and update `deploy\.env.release` in the main repository so `DESKTOP_RECOMMENDED_SHELL_VERSION`, `DESKTOP_UPDATE_WINDOWS_X86_64_VERSION`, URL and signature all point to the same new version. Deploy refuses mismatched metadata.
+After that, commit the version files and update `deploy\.env.release` in the main repository so `DESKTOP_RECOMMENDED_SHELL_VERSION`, `DESKTOP_UPDATE_WINDOWS_X86_64_VERSION`, immutable server URL, signature and SHA-256 all point to the same new version. Deploy refuses mismatched metadata. The ordinary build writes both the current download alias and the immutable updater artifact under `release\stable\windows\x64\<version>`.
+
+### Release profiles
+
+The public `ordinary` profile is the current unsigned Windows release. It is compiled without the `secret-crypto` feature, keeps the managed messenger behavior unchanged and is the only profile that may be published through the ordinary updater:
+
+```powershell
+npm run release:win
+```
+
+The private `secret-beta` command uses the already aligned desktop version, enables `secret-crypto` and permits the Preview milestone to run without Authenticode. Rust/Tauri sources are mirrored to `F:\STEM-build\source-current\stem-messenger`, Cargo artifacts go to `F:\STEM-build\cargo-target`, and Tauri therefore generates `src-tauri\gen\schemas` outside `Documents`. Configure `STEM_SECRET_WINDOWS_RELEASE_ID` and the four transparency pins in the main repository's `deploy\.env.release`; the build script loads them from that single release source and rejects a version or environment mismatch:
+
+```powershell
+npm run release:secret-beta
+```
+
+The four transparency keys are compiled into the beta runtime; missing, duplicate or mismatched pins stop the build/preflight. Authenticode remains deferred, while the Tauri updater signature is still mandatory. Output is isolated under `release\secret-beta\windows\x64\<version>` and must only be distributed to the two-account Preview allowlist; it never replaces the ordinary `release\Setup STEM.exe` artifact. The full order is documented in `docs\secret-windows-deploy-readiness-plan.md`.
 
 Generated folders and release artifacts are not part of the source release:
 
